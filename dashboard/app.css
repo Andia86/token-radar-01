@@ -1,0 +1,166 @@
+/* Token Radar — a dark chartroom theme, hand-written. One accent (signal green) for values and
+   selection, one amber for watchlist marks, hairline rules instead of boxes. */
+
+:root {
+  --bg: #0a0e12;
+  --panel: #0f151c;
+  --panel-2: #121a22;
+  --line: #1e2a35;
+  --line-soft: #162029;
+  --text: #d9e3ea;
+  --muted: #8496a3;
+  --faint: #5b6d7a;
+  --accent: #43d99a;
+  --accent-dim: #1d3a2d;
+  --amber: #f0b45a;
+  --red: #f0766d;
+  --num: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.skip {
+  position: absolute; left: -9999px; top: 0;
+  background: var(--accent); color: #06110b; padding: 8px 14px; z-index: 10;
+}
+.skip:focus { left: 8px; top: 8px; }
+
+main { max-width: 1180px; margin: 0 auto; padding: 28px 20px 56px; }
+
+/* ---- header ---- */
+.masthead { border-bottom: 2px solid var(--accent); padding-bottom: 14px; }
+.kicker {
+  font-family: var(--num); font-size: 11px; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--accent); margin: 0 0 6px;
+}
+h1 { font-size: 30px; line-height: 1.15; margin: 0 0 8px; font-weight: 700; letter-spacing: -0.01em; }
+.lede { color: var(--muted); max-width: 76ch; margin: 0; }
+.lede strong { color: var(--text); font-weight: 600; }
+
+.stats {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+  background: var(--line-soft); border: 1px solid var(--line-soft);
+  margin: 18px 0 20px;
+}
+.stat { background: var(--panel); padding: 12px 16px; }
+.stat .n { font-family: var(--num); font-size: 24px; font-weight: 600; color: var(--text); }
+.stat .n em { font-style: normal; color: var(--accent); }
+.stat .l { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+/* ---- controls ---- */
+.controls {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  padding: 12px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  margin-bottom: 6px;
+}
+.tabs { display: flex; gap: 6px; margin-right: auto; }
+.tab {
+  font: inherit; font-size: 13.5px; padding: 6px 14px; cursor: pointer;
+  background: transparent; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 999px;
+}
+.tab[aria-pressed="true"] { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+.controls input[type="search"], .controls select {
+  font: inherit; font-size: 13.5px; color: var(--text);
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 10px;
+}
+.controls input[type="search"] { width: 210px; }
+.check { display: inline-flex; gap: 6px; align-items: center; font-size: 13.5px; color: var(--muted); cursor: pointer; }
+.count-line { font-family: var(--num); font-size: 12.5px; color: var(--faint); margin: 8px 0 4px; }
+
+/* ---- board table ---- */
+table { width: 100%; border-collapse: collapse; }
+thead th {
+  font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint);
+  text-align: left; padding: 10px 10px 8px; border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+thead th.num, tbody td.num { text-align: right; }
+th .sort {
+  font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer;
+  text-transform: inherit; letter-spacing: inherit;
+}
+th .sort:hover { color: var(--text); }
+th .sort[aria-sort="desc"]::after { content: " \2193"; color: var(--accent); }
+th .sort[aria-sort="asc"]::after { content: " \2191"; color: var(--accent); }
+tbody tr { border-bottom: 1px solid var(--line-soft); cursor: pointer; }
+tbody tr:hover { background: var(--panel-2); }
+tbody td { padding: 9px 10px; vertical-align: baseline; }
+td.rank { font-family: var(--num); color: var(--faint); width: 44px; }
+td.who .name { font-weight: 600; }
+td.who .sub { display: block; font-size: 12px; color: var(--muted); font-weight: 400; }
+td.num, .mono { font-family: var(--num); font-size: 13.5px; white-space: nowrap; }
+td.value { color: var(--accent); font-weight: 600; }
+.pos { color: var(--accent); }
+.neg { color: var(--red); }
+.tag {
+  display: inline-block; font-family: var(--num); font-size: 10px; letter-spacing: 0.08em;
+  padding: 1px 6px; border-radius: 3px; margin-left: 8px; vertical-align: 2px;
+}
+.tag.watch { color: var(--amber); border: 1px solid var(--amber); }
+.tag.early { color: var(--faint); border: 1px solid var(--line); }
+.empty { padding: 36px 10px; color: var(--muted); text-align: center; }
+.button {
+  font: inherit; font-size: 13.5px; padding: 7px 16px; cursor: pointer; border-radius: 6px;
+  background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent);
+}
+
+/* ---- detail ---- */
+.back { color: var(--accent); text-decoration: none; font-size: 13.5px; }
+.back:hover { text-decoration: underline; }
+.detail h1 { margin-top: 10px; }
+.badges { margin: 4px 0 0; }
+.badge {
+  display: inline-block; font-family: var(--num); font-size: 11px; letter-spacing: 0.06em;
+  border: 1px solid var(--line); border-radius: 3px; padding: 2px 8px; margin-right: 6px; color: var(--muted);
+}
+.badge.watch { color: var(--amber); border-color: var(--amber); }
+.record {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+  background: var(--line-soft); border: 1px solid var(--line-soft); margin: 18px 0;
+}
+.record .cell { background: var(--panel); padding: 10px 14px; }
+.record .k { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+.record .v { font-family: var(--num); font-size: 17px; margin-top: 2px; }
+h2.sec { font-size: 17px; margin: 26px 0 8px; padding-top: 18px; border-top: 1px solid var(--line); }
+.arith { font-family: var(--num); font-size: 14px; line-height: 2; color: var(--muted); }
+.arith b { color: var(--text); font-weight: 600; }
+.arith .eq { color: var(--accent); font-size: 16px; }
+.why { color: var(--muted); max-width: 78ch; }
+.why b { color: var(--text); }
+ol.plan { margin: 8px 0 0; padding-left: 22px; max-width: 86ch; }
+ol.plan li { margin-bottom: 10px; }
+ol.plan li::marker { font-family: var(--num); color: var(--accent); }
+.basis { font-family: var(--num); font-size: 12.5px; color: var(--faint); }
+
+/* ---- method & live ---- */
+.method-body { max-width: 78ch; color: var(--muted); }
+.method-body h2 { color: var(--text); font-size: 20px; }
+.method-body p { margin: 0 0 12px; }
+.formula {
+  font-family: var(--num); font-size: 14.5px; color: var(--text);
+  background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  padding: 12px 16px; margin: 16px 0; overflow-x: auto; white-space: nowrap;
+}
+.peer-table td.cat, .peer-table td:first-child { font-weight: 600; color: var(--text); }
+.note { color: var(--faint); font-size: 13px; }
+
+footer {
+  margin-top: 34px; padding-top: 14px; border-top: 1px solid var(--line);
+  color: var(--faint); font-size: 12.5px;
+}
+
+@media (max-width: 760px) {
+  .stats, .record { grid-template-columns: repeat(2, 1fr); }
+  h1 { font-size: 24px; }
+  td.hideable, th.hideable { display: none; }
+}
