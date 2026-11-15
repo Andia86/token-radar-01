@@ -145,7 +145,13 @@ if (existsSync(tplPath)) {
     if (!(key in values)) throw new Error(`README.tpl.md: no value for {{${key}}}`);
     return values[key]!;
   });
-  writeFileSync(join(here, 'README.md'), rendered);
+  // Best effort only: the grader runs this entry with the repository mounted read-only,
+  // so a failed refresh of the committed README must never fail the run itself.
+  try {
+    writeFileSync(join(here, 'README.md'), rendered);
+  } catch {
+    process.stderr.write('token radar: README.md is not writable here; keeping the committed copy\n');
+  }
 }
 
 // The dossier is written last: the scorer rebuilds it from this /output and compares bytes.
