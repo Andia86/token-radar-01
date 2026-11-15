@@ -526,7 +526,7 @@ export function liveRows(snapshot: Snapshot): LiveRow[] {
 
 /** Everything the dashboard needs: the board, the live set, the peer table and the model it runs. */
 export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: RadarData; result: unknown } {
-  const result = core.runModel(snapshot.protocols, { as_of: snapshot.as_of, watchlist: snapshot.watchlist, params: core.PARAMS });
+  const result = core.runModel(snapshot.protocols, { as_of: snapshot.as_of, watchlist: snapshot.watchlist, params: core.PARAMS, sensitivityTopN: 10 });
   const table = result.peerTable;
   const watch = new Set(snapshot.watchlist);
   const board: BoardRow[] = result.board.map((entry: never) => toBoardRow(entry, watch));
@@ -654,10 +654,11 @@ export function dataScript(
   snapshot: Snapshot,
   board: BoardRow[],
   live: LiveRow[],
-  result: { stats: Record<string, number> },
+  result: { stats: Record<string, number>; sensitivity: unknown },
   modelSha: string,
   snapshotSha: string,
   raw: RawData,
+  coreExcerpts: Record<string, string> = {},
 ): string {
   const data = {
     meta: {
@@ -674,6 +675,8 @@ export function dataScript(
     raw,
     board,
     live,
+    sensitivity: result.sensitivity,
+    src: coreExcerpts,
   };
   return `window.RADAR=${JSON.stringify(data)};\n`;
 }

@@ -47,7 +47,7 @@ const snapshot = parseSnapshot(snapBytes.toString('utf8'));
 const { board, radar, result } = buildRadar(snapshot) as {
   board: ReturnType<typeof buildRadar>['board'];
   radar: ReturnType<typeof buildRadar>['radar'];
-  result: { stats: Record<string, number> };
+  result: { stats: Record<string, number>; sensitivity: unknown };
 };
 const issue = boardIssue(board, snapshot);
 if (issue !== null) {
@@ -59,6 +59,23 @@ if (issue !== null) {
 // and the dossier all name the same two hashes (the model's and the snapshot's).
 const coreBytes = readFileSync(join(here, 'lib/model-core.js'));
 const modelSha = createHash('sha256').update(coreBytes).digest('hex');
+
+/** One top-level function out of the core source, braces balanced: the method page prints these. */
+function coreExcerpt(source: string, name: string): string {
+  const start = source.indexOf(`function ${name}(`);
+  if (start < 0) return '';
+  let depth = 0;
+  for (let i = source.indexOf('{', start); i < source.length; i++) {
+    if (source[i] === '{') depth++;
+    else if (source[i] === '}' && --depth === 0) return source.slice(start, i + 1);
+  }
+  return '';
+}
+const coreText = coreBytes.toString('utf8');
+const coreExcerpts = {
+  median: coreExcerpt(coreText, 'median'),
+  shrinkMultiple: coreExcerpt(coreText, 'shrinkMultiple'),
+};
 const raw = buildRaw(snapshot, snapshotSha);
 const rawBytes = Buffer.byteLength(JSON.stringify(raw), 'utf8');
 if (rawBytes > 150_000) {
@@ -68,7 +85,7 @@ if (rawBytes > 150_000) {
 
 mkdirSync(out, { recursive: true });
 writeFileSync(join(out, 'board.json'), `${JSON.stringify({ meta: { model_version: radar.model_version, model_sha: modelSha, snapshot_sha: snapshotSha }, rows: board })}\n`);
-writeFileSync(join(out, 'data.js'), dataScript(snapshot, board, radar.live, result, modelSha, snapshotSha, raw));
+writeFileSync(join(out, 'data.js'), dataScript(snapshot, board, radar.live, result, modelSha, snapshotSha, raw, coreExcerpts));
 
 /** Copy one directory's regular files into `to`, skipping names that start with a dot. */
 function copyFiles(from: string, to: string): string[] {

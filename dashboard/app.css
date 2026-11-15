@@ -180,5 +180,22 @@ footer {
 .q-thin { background: #e0a100; }
 .q-very-thin { background: #d96c00; }
 .q-borrowed { background: #9a9a9a; }
+
+/* ---- check chain, derivation, sensitivity ---- */
+.xtoggle { background: none; border: none; color: var(--faint); cursor: pointer; font-size: 11px; padding: 0 5px 0 0; }
+.xtoggle:hover { color: var(--accent); }
+.xrow td { background: #fafafa; padding: 12px 16px; }
+.chain-steps { margin: 0 0 8px; padding-left: 20px; font-size: 13.5px; line-height: 1.55; }
+.chain-steps .formula-note { color: var(--faint); font-size: 12.5px; }
+.chainline { font-family: var(--num); font-size: 13px; }
+.derive h3 { margin: 16px 0 6px; font-size: 14.5px; }
+.peer-table.mini { max-width: 560px; }
+.peer-table tr.clipped td { color: var(--faint); }
+.bar-wrap { position: relative; height: 10px; background: var(--line-soft); border-radius: 2px; min-width: 130px; }
+.bar { position: absolute; top: 0; height: 10px; background: var(--amber); border-radius: 2px; }
+pre.src {
+  font-family: var(--num); font-size: 11.5px; line-height: 1.5; overflow-x: auto;
+  border: 1px solid var(--line-soft); border-radius: 4px; padding: 12px 14px; background: #fbfbf9;
+}
 .tag.tokened { color: var(--faint); border: 1px solid var(--line); }
 .server-val { color: #b3261e; font-size: 13px; }

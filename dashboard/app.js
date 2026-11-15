@@ -27,6 +27,7 @@
   function round4(n) { return Math.round(n * 1e4) / 1e4; }
 
   var RESULT = null;   // the browser's own run of the model
+  var PRICE = {};      // slug -> the browser's priceRow result (chain, shrink, factors)
   var CHECK = null;    // its self-check against the server's board
   var CHECK_ERROR = null;
   var DATA = null;     // the view-model the views render from (the browser's numbers)
@@ -44,12 +45,15 @@
       live_count: meta.stats.tokenedCount, live_size: RAW.live.length,
       categories: [], rows: RAW.board, live: RAW.live, model: meta.model,
       max_peer_ratio: meta.stats.maxPeerRatioRaw,
+      sensitivity: RAW.sensitivity || null, src: RAW.src || {},
     };
     DATA = fallback;
     if (typeof window.ModelCore === 'undefined') { CHECK_ERROR = 'model.js did not load'; return; }
     try {
       var records = decodeRaw(RAW.raw);
-      RESULT = window.ModelCore.runModel(records, { as_of: meta.as_of, watchlist: meta.watchlist, params: window.ModelCore.PARAMS });
+      RESULT = window.ModelCore.runModel(records, { as_of: meta.as_of, watchlist: meta.watchlist, params: window.ModelCore.PARAMS, sensitivityTopN: 10 });
+      RESULT.board.forEach(function (entry) { PRICE[entry.row.slug] = entry.price; });
+      RESULT.tokened.forEach(function (entry) { if (!PRICE[entry.row.slug]) PRICE[entry.row.slug] = entry.price; });
       CHECK = window.ModelCore.selfCheck(RESULT.board, RAW.board);
       var localRows = RESULT.board.map(function (entry) {
         var s = serverBySlug[entry.row.slug];
@@ -87,6 +91,7 @@
         early_size: localRows.filter(function (r) { return !r.watchlist; }).length,
         live_count: RESULT.stats.tokenedCount, categories: cats, rows: localRows,
         max_peer_ratio: RESULT.stats.maxPeerRatioRaw,
+        sensitivity: RESULT.sensitivity, src: RAW.src || {},
       });
     } catch (err) {
       CHECK_ERROR = 'the model failed to run here: ' + (err && err.message ? err.message : err);
@@ -388,7 +393,7 @@
       var tag = boardTags(r);
       if (bad[r.slug]) tag += ' <span class="tag delta" title="This row differs from the server board">&Delta;</span>';
       html += '<tr data-slug="' + esc(r.slug) + '" tabindex="0">' +
-        '<td class="rank">' + r.rank + '</td>' +
+        '<td class="rank"><button type="button" class="xtoggle" data-x="' + esc(r.slug) + '" aria-expanded="false" title="Show the check chain">&#9656;</button>' + r.rank + '</td>' +
         '<td class="who"><span class="name">' + esc(r.name) + '</span>' + tag + '<span class="sub">' + esc(r.category || 'Uncategorized') + '</span></td>' +
         '<td class="num">' + fmtShort(r.tvl_usd) + '</td>' +
         '<td class="num ' + (r.change_7d === null ? '' : r.change_7d >= 0 ? 'pos' : 'neg') + '">' + fmtPct(r.change_7d) + '</td>' +
@@ -400,6 +405,29 @@
         '</tr>';
     });
     return html + '</tbody></table>';
+  }
+  // The check chain under a board row: the multiplication that produced the row's value,
+  // computed by the model run itself — the page prints it, it does not recompute it.
+  function fmtChainVal(step) {
+    if (step.label === 'TVL' || step.label === 'Implied value') return fmtUsd(step.value);
+    return 'x' + Number(step.value).toFixed(4);
+  }
+  function chainHtml(r) {
+    var price = PRICE[r.slug];
+    if (!price) {
+      return '<div class="chainline">' + fmtShort(r.tvl_usd) + ' TVL &times; ' + r.model.category_multiple.toFixed(3) + ' multiple &times; ' +
+        r.model.growth_multiplier.toFixed(3) + ' growth &times; ' + r.model.maturity_multiplier.toFixed(3) + ' maturity &times; ' +
+        r.model.breadth_multiplier.toFixed(3) + ' breadth = ' + fmtShort(r.implied_value_usd) + ' (the step-by-step chain needs the model running in the browser)</div>';
+    }
+    var steps = price.chain.map(function (st) {
+      return '<li><b>' + esc(st.label) + '</b> ' + fmtChainVal(st) + ' <span class="formula-note">' + esc(st.formula) + '</span></li>';
+    }).join('');
+    var product = price.chain.slice(0, 5).reduce(function (acc, st) { return acc * st.value; }, 1);
+    var checks = Math.round(product) === price.implied;
+    return '<ol class="chain-steps">' + steps + '</ol>' +
+      '<div class="chainline">' + fmtShort(r.tvl_usd) + ' &times; ' + price.multiple.toFixed(4) + ' &times; ' + price.growth_multiplier.toFixed(3) +
+      ' &times; ' + price.maturity_multiplier.toFixed(3) + ' &times; ' + price.breadth_multiplier.toFixed(3) + ' = ' + fmtShort(price.implied) +
+      (checks ? ' &check; the chain reproduces the board value' : ' — the chain does not reproduce the board value') + '</div>';
   }
   function emptyBoard(st) {
     var what = st.q ? 'No match for &lsquo;' + esc(st.q) + '&rsquo; under these filters.' : 'No protocol on the board matches these filters.';
@@ -560,7 +588,60 @@
         '<td><span class="qdot q-' + (c.quality || 'borrowed') + '"></span>' + esc(c.quality || 'borrowed') + '</td>' +
         '<td class="num">' + c.subjects + '</td></tr>';
     });
-    html += '</tbody></table><p class="note">A category with no trading peers borrows its group&rsquo;s multiple, and every detail view says when that is the case for its row.</p></div>';
+    html += '</tbody></table><p class="note">A category with no trading peers borrows its group&rsquo;s multiple, and every detail view says when that is the case for its row.</p>';
+    // Sensitivity of the head of the board, from the run itself.
+    if (DATA.sensitivity && DATA.sensitivity.length) {
+      var bySlug = {};
+      DATA.rows.forEach(function (r) { bySlug[r.slug] = r; });
+      var scale = Math.max.apply(null, DATA.sensitivity.map(function (s) { return s.impliedMax; }));
+      html += '<h2 class="sec">How far the head of the board moves when the model is stressed</h2>' +
+        '<p>The top ten, re-priced five ways: a gentler and a stronger shrinkage (K = 3 and K = 12), pricing straight off the ' +
+        'category group with no weight on the category&rsquo;s own median, leave-one-out over each row&rsquo;s category peers, and no ' +
+        'winsorize at all. The bar spans the lowest to the highest implied value across those re-pricings; the last column counts in how ' +
+        'many of the five the row still ranks in the top three.</p>' +
+        '<table class="peer-table sens"><thead><tr><th>#</th><th>Protocol</th><th class="num">Implied value here</th><th>Range under stress</th><th class="num">Low – high</th><th class="num">Ranks</th><th class="num">Top 3 in</th></tr></thead><tbody>';
+      DATA.sensitivity.forEach(function (s) {
+        var r = bySlug[s.slug];
+        var left = (s.impliedMin / scale) * 100;
+        var width = Math.max(0.6, ((s.impliedMax - s.impliedMin) / scale) * 100);
+        html += '<tr><td class="num">' + (r ? r.rank : '') + '</td><td class="cat">' + esc(r ? r.name : s.slug) + '</td>' +
+          '<td class="num">' + (r ? fmtShort(r.implied_value_usd) : '') + '</td>' +
+          '<td><div class="bar-wrap"><div class="bar" style="left:' + left.toFixed(1) + '%;width:' + width.toFixed(1) + '%"></div></div></td>' +
+          '<td class="num">' + fmtShort(s.impliedMin) + ' – ' + fmtShort(s.impliedMax) + '</td>' +
+          '<td class="num">' + s.rankMin + '–' + s.rankMax + '</td>' +
+          '<td class="num">' + s.top3Share + ' / ' + s.settings + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    // The category-group map, from the model itself.
+    var groups = {};
+    if (window.ModelCore && window.ModelCore.CATEGORY_GROUPS) {
+      Object.keys(window.ModelCore.CATEGORY_GROUPS).forEach(function (cat) {
+        var g = window.ModelCore.CATEGORY_GROUPS[cat];
+        (groups[g] = groups[g] || []).push(cat);
+      });
+    } else {
+      DATA.categories.forEach(function (c) { if (c.group) (groups[c.group] = groups[c.group] || []).push(c.category); });
+    }
+    var groupNames = Object.keys(groups).sort();
+    if (groupNames.length) {
+      html += '<h2 class="sec">Category groups</h2>' +
+        '<p>Every category in the snapshot is mapped to one group; the shrinkage borrows through the group before it borrows from the whole market.</p>' +
+        '<table class="peer-table"><thead><tr><th>Group</th><th>Categories</th></tr></thead><tbody>';
+      groupNames.forEach(function (g) {
+        html += '<tr><td class="cat">' + esc(g) + '</td><td>' + groups[g].slice().sort().map(esc).join(', ') + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    // The pricing core, in source.
+    if (DATA.src && DATA.src.median) {
+      html += '<h2 class="sec">The model, in source</h2>' +
+        '<p>The two functions that carry the pricing — the true median, and the layered shrinkage. The whole model is one file, ' +
+        'model.js, shipped beside this page and printed in full in the dossier; its sha256 is in the footer of every view.</p>' +
+        '<pre class="src">' + esc(DATA.src.median) + '</pre>' +
+        '<pre class="src">' + esc(DATA.src.shrinkMultiple) + '</pre>';
+    }
+    html += '</div>';
     return html + footer();
   }
 
@@ -575,6 +656,41 @@
       '. Its seven-day TVL change counts at ' + fmtPct(m.growth_pct) + ' after clamping, half weight; it has run ' +
       (m.age_days === null ? 'an unrecorded time (counted as one year)' : m.age_days + ' days') + ' with no token on record, and it runs on ' +
       r.chains.length + ' chain' + (r.chains.length === 1 ? '' : 's') + '. Multiplied out, a token priced like its peers would be worth <b>' + fmtUsd(r.implied_value_usd) + '</b> &mdash; a conditional value, not a forecast.';
+  }
+  // The full derivation of one row's value: its category's peer table (raw and winsorized
+  // ratios side by side, clipped ones marked), the two shrinkage layers with their weights,
+  // and the multiplication itself. Printed from the browser's own run of the model.
+  function derivationCard(r) {
+    var price = PRICE[r.slug];
+    if (!price || !RESULT) return '';
+    var s = price.shrink;
+    var entry = RESULT.peerTable.by_category[price.category];
+    var html = '<h2 class="sec">The derivation, step by step</h2><div class="derive">';
+    if (entry && entry.peers > 0) {
+      html += '<h3>Peers in ' + esc(price.category) + ' — ' + entry.peers + ' trading, evidence ' + s.quality + '</h3>' +
+        '<table class="peer-table mini"><thead><tr><th>Peer</th><th class="num">Raw ratio</th><th class="num">Winsorized</th></tr></thead><tbody>';
+      entry.peer_ids.forEach(function (slug, i) {
+        var raw = entry.ratios_raw[i];
+        var w = entry.ratios[i];
+        var clipped = Math.abs(raw - w) > 1e-12;
+        html += '<tr' + (clipped ? ' class="clipped"' : '') + '><td class="mono">' + esc(slug) + '</td><td class="num">' + raw.toFixed(4) + '</td><td class="num">' + w.toFixed(4) + (clipped ? ' (clipped)' : '') + '</td></tr>';
+      });
+      html += '</tbody></table>' +
+        '<p class="note">Category median: x' + entry.median.toFixed(4) + ' — the true median of the ' + entry.peers + ' winsorized ratios.</p>';
+    } else {
+      html += '<p class="note">No protocol in ' + esc(price.category) + ' records a token with a market cap and a TVL, so this row borrows the ' + esc(s.group) + ' group multiple outright (evidence: borrowed).</p>';
+    }
+    html += '<h3>Shrinkage, in log space</h3><ol class="chain-steps">' +
+      '<li><b>Group</b> ' + esc(s.group) + ': ' + s.group_n + ' peers, median x' + (s.group_median === null ? '—' : s.group_median.toFixed(4)) +
+      ', weight w<sub>g</sub> = ' + s.group_w.toFixed(3) + ' against the global median x' + RESULT.peerTable.global_median.toFixed(4) +
+      ' &rarr; group multiple x' + s.parent_m.toFixed(4) + '</li>' +
+      '<li><b>Category</b>: weight w<sub>c</sub> = ' + s.w.toFixed(3) + ' (K<sub>eff</sub> = ' + s.k_eff.toFixed(1) + ') on its own median &rarr; multiple x' + price.multiple.toFixed(4) +
+      (s.capped ? ' — capped at 1.5&times; the group&rsquo;s 75th percentile' : '') + '</li></ol>' +
+      '<h3>The multiplication</h3><ol class="chain-steps">' +
+      price.chain.map(function (st) {
+        return '<li><b>' + esc(st.label) + '</b> ' + fmtChainVal(st) + ' <span class="formula-note">' + esc(st.formula) + '</span></li>';
+      }).join('') + '</ol></div>';
+    return html;
   }
   function detailView() {
     var r = null;
@@ -606,6 +722,7 @@
       fmtMult(m.growth_multiplier) + '</b> growth &times; <b>' + fmtMult(m.maturity_multiplier) + '</b> maturity &times; <b>' +
       fmtMult(m.breadth_multiplier) + '</b> breadth = <span class="eq">' + fmtUsd(r.implied_value_usd) + '</span></p>' +
       '<p class="why">' + whyValue(r) + '</p>' +
+      derivationCard(r) +
       (mismatchSlugs()[r.slug] ? '<p class="server-val">This row differs from the server&rsquo;s board (see the check bar above for both values).</p>' : '') +
       '<h2 class="sec">Farm plan</h2>' +
       '<p class="basis">Plan basis: ' + esc(PLAYBOOKS[r.category] || 'flagship product') + ' playbook &middot; ' +
@@ -648,6 +765,29 @@
       function open() { goto('#/protocol/' + encodeURIComponent(tr.getAttribute('data-slug'))); }
       tr.addEventListener('click', open);
       tr.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    });
+    root.querySelectorAll('#board-host .xtoggle').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var tr = btn.closest('tr');
+        var next = tr.nextElementSibling;
+        if (next && next.classList.contains('xrow')) {
+          next.remove();
+          btn.setAttribute('aria-expanded', 'false');
+          btn.innerHTML = '&#9656;';
+          return;
+        }
+        var slug = btn.getAttribute('data-x');
+        var row = null;
+        DATA.rows.forEach(function (r) { if (r.slug === slug) row = r; });
+        if (!row) return;
+        var xr = document.createElement('tr');
+        xr.className = 'xrow';
+        xr.innerHTML = '<td colspan="9">' + chainHtml(row) + '</td>';
+        tr.after(xr);
+        btn.setAttribute('aria-expanded', 'true');
+        btn.innerHTML = '&#9662;';
+      });
     });
   }
   function wireBoard() {
