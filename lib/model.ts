@@ -512,7 +512,7 @@ export function liveRows(snapshot: Snapshot): LiveRow[] {
 }
 
 /** Everything the dashboard needs: the board, the live set, the peer table and the model it runs. */
-export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: RadarData } {
+export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: RadarData; result: unknown } {
   const result = core.runModel(snapshot.protocols, { as_of: snapshot.as_of, watchlist: snapshot.watchlist, params: core.PARAMS });
   const table = result.peerTable;
   const watch = new Set(snapshot.watchlist);
@@ -544,7 +544,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     rows: board,
     live: liveRows(snapshot),
   };
-  return { board, radar };
+  return { board, radar, result };
 }
 
 /**
@@ -585,7 +585,82 @@ export function boardIssue(board: BoardRow[], snapshot: Snapshot): string | null
   return null;
 }
 
-/** A compact data.js: the dashboard's whole dataset as one script, no fetch and no network. */
-export function dataScript(radar: RadarData): string {
-  return `window.RADAR=${JSON.stringify(radar)};\n`;
+/** The dashboard's raw block: every protocol's ten fields, columnar, with category and chain dictionary-encoded. */
+export interface RawData {
+  cols: string[];
+  dict: { category: string[]; chain: string[] };
+  rows: unknown[][];
+  source: { file: string; sha256: string; taken_at: string };
+}
+
+/**
+ * The snapshot's records as the browser's model input: exactly the core's INPUT_FIELDS, in the
+ * snapshot's order, at the snapshot's own precision. Only the fields the core reads are carried.
+ */
+export function buildRaw(snapshot: Snapshot, snapshotSha: string): RawData {
+  const cols: string[] = core.INPUT_FIELDS;
+  const catDict: string[] = [];
+  const chainDict: string[] = [];
+  const catIndex = new Map<string, number>();
+  const chainIndex = new Map<string, number>();
+  const intern = (dict: string[], index: Map<string, number>, value: string): number => {
+    let at = index.get(value);
+    if (at === undefined) {
+      at = dict.length;
+      dict.push(value);
+      index.set(value, at);
+    }
+    return at;
+  };
+  const rows = snapshot.protocols.map((p) => {
+    const record: Record<string, unknown> = { ...p };
+    for (const field of cols) {
+      if (!(field in record)) throw new SnapshotError(`protocol ${p.slug} lacks the model input field ${field}`);
+    }
+    return [
+      p.slug,
+      p.name,
+      p.category === null ? -1 : intern(catDict, catIndex, p.category),
+      p.chains.map((c) => intern(chainDict, chainIndex, c)),
+      p.tvl_usd,
+      p.change_7d,
+      p.mcap_usd,
+      p.listed_at,
+      p.gecko_id,
+      p.symbol,
+    ];
+  });
+  return { cols, dict: { category: catDict, chain: chainDict }, rows, source: { file: 'snapshot.json', sha256: snapshotSha, taken_at: snapshot.as_of } };
+}
+
+/**
+ * The dashboard's data.js: the model's two hashes, the raw records the browser re-prices from,
+ * the server's board (kept as the self-check's reference) and the live set. No fetch, no network.
+ */
+export function dataScript(
+  snapshot: Snapshot,
+  board: BoardRow[],
+  live: LiveRow[],
+  result: { stats: Record<string, number> },
+  modelSha: string,
+  snapshotSha: string,
+  raw: RawData,
+): string {
+  const data = {
+    meta: {
+      as_of: snapshot.as_of,
+      source: snapshot.source,
+      floor_usd: snapshot.floor_usd,
+      model: MODEL,
+      model_version: MODEL_VERSION,
+      model_sha: modelSha,
+      snapshot_sha: snapshotSha,
+      watchlist: snapshot.watchlist,
+      stats: result.stats,
+    },
+    raw,
+    board,
+    live,
+  };
+  return `window.RADAR=${JSON.stringify(data)};\n`;
 }

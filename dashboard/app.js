@@ -1,10 +1,123 @@
 // Token Radar dashboard: a working radar over window.RADAR (data.js, built by main.ts from the
-// sealed snapshot). Board, live-token and method views, a detail view per protocol, hash-routed
-// so a screenshot and the page agree. No fetch, no network: everything renders from the data file.
+// sealed snapshot). The page re-prices every row in the browser with model.js — the model's own
+// source, byte for byte the file the server runs — from the snapshot's raw fields in data.js,
+// then checks its board against the server's, line by line, and says so at the top of the page.
+// Board, live-token and method views, a detail view per protocol, hash-routed so a screenshot
+// and the page agree. No fetch, no network: everything renders from the data file.
 (function () {
   'use strict';
-  var DATA = window.RADAR;
+  var RAW = window.RADAR || null;
   var root = document.getElementById('view');
+
+  // ---------- the model, run here ----------
+  // Decode the columnar raw block back into the snapshot's ten-field records.
+  function decodeRaw(raw) {
+    var cols = raw.cols;
+    return raw.rows.map(function (r) {
+      var p = {};
+      cols.forEach(function (c, i) {
+        var v = r[i];
+        if (c === 'category') v = v < 0 ? null : raw.dict.category[v];
+        if (c === 'chains') v = v.map(function (ix) { return raw.dict.chain[ix]; });
+        p[c] = v;
+      });
+      return p;
+    });
+  }
+  function round4(n) { return Math.round(n * 1e4) / 1e4; }
+
+  var RESULT = null;   // the browser's own run of the model
+  var CHECK = null;    // its self-check against the server's board
+  var CHECK_ERROR = null;
+  var DATA = null;     // the view-model the views render from (the browser's numbers)
+  (function boot() {
+    if (!RAW || !RAW.meta || !RAW.raw || !RAW.board) { CHECK_ERROR = 'data.js did not load'; return; }
+    var meta = RAW.meta;
+    var serverBySlug = {};
+    RAW.board.forEach(function (r) { serverBySlug[r.slug] = r; });
+    var fallback = {
+      as_of: meta.as_of, source: meta.source, floor_usd: meta.floor_usd, model: meta.model,
+      model_version: meta.model_version, global_median: meta.stats.globalMedian,
+      peer_count: meta.stats.tokenedPeerCount, protocol_count: meta.stats.protocolCount,
+      watchlist_size: meta.stats.watchlistSize, board_size: meta.stats.boardCount,
+      early_size: RAW.board.filter(function (r) { return !r.watchlist; }).length,
+      live_count: meta.stats.tokenedCount, live_size: RAW.live.length,
+      categories: [], rows: RAW.board, live: RAW.live,
+    };
+    DATA = fallback;
+    if (typeof window.ModelCore === 'undefined') { CHECK_ERROR = 'model.js did not load'; return; }
+    try {
+      var records = decodeRaw(RAW.raw);
+      RESULT = window.ModelCore.runModel(records, { as_of: meta.as_of, watchlist: meta.watchlist, params: window.ModelCore.PARAMS });
+      CHECK = window.ModelCore.selfCheck(RESULT.board, RAW.board);
+      var localRows = RESULT.board.map(function (entry) {
+        var s = serverBySlug[entry.row.slug];
+        var v = entry.price;
+        var row = Object.assign({}, s, {
+          rank: entry.rank,
+          age_days: v.age_days,
+          implied_value_usd: v.implied,
+          model: {
+            category: v.category, peer_count: v.peers, category_multiple: round4(v.multiple),
+            growth_pct: v.growth_pct, growth_multiplier: round4(v.growth_multiplier),
+            maturity_multiplier: round4(v.maturity_multiplier), breadth_multiplier: round4(v.breadth_multiplier),
+            age_days: v.age_days,
+          },
+        });
+        return row;
+      });
+      var subjectCount = {};
+      localRows.forEach(function (r) { subjectCount[r.model.category] = (subjectCount[r.model.category] || 0) + 1; });
+      var cats = Object.keys(subjectCount).map(function (category) {
+        var price = window.ModelCore.multipleFor(RESULT.peerTable, category);
+        return {
+          category: category, peers: price.peers,
+          median_raw: price.median_raw === null ? null : round4(price.median_raw),
+          multiple: round4(price.multiple), subjects: subjectCount[category],
+        };
+      }).sort(function (a, b) { return b.subjects - a.subjects || (a.category < b.category ? -1 : 1); });
+      DATA = Object.assign({}, fallback, {
+        global_median: RESULT.stats.globalMedian, peer_count: RESULT.stats.tokenedPeerCount,
+        protocol_count: RESULT.stats.protocolCount, watchlist_size: RESULT.stats.watchlistSize,
+        board_size: RESULT.stats.boardCount,
+        early_size: localRows.filter(function (r) { return !r.watchlist; }).length,
+        live_count: RESULT.stats.tokenedCount, categories: cats, rows: localRows,
+      });
+    } catch (err) {
+      CHECK_ERROR = 'the model failed to run here: ' + (err && err.message ? err.message : err);
+      RESULT = null;
+      CHECK = null;
+    }
+  })();
+
+  // The self-check bar: green when the browser's board is the server's, amber with the differing
+  // rows named when it is not, grey when the model could not run and the server's board is shown.
+  function checkBar() {
+    var meta = RAW.meta;
+    var sha = 'model ' + meta.model_sha.slice(0, 12) + ' &middot; snapshot ' + meta.snapshot_sha.slice(0, 12);
+    if (CHECK && CHECK.ok) {
+      return '<div class="checkbar ok" role="status">Browser re-priced ' + CHECK.matched + '/' + CHECK.total +
+        ' rows from the snapshot&rsquo;s raw fields &mdash; every value matches the server&rsquo;s board &middot; ' + sha + '</div>';
+    }
+    if (CHECK) {
+      var bad = {};
+      CHECK.mismatches.forEach(function (mm) { bad[mm.slug] = true; });
+      var items = CHECK.mismatches.slice(0, 20).map(function (mm) {
+        return '<li>' + esc(mm.slug) + ' &middot; ' + esc(mm.field) + ': here ' + esc(String(mm.local)) + ', server ' + esc(String(mm.server)) + '</li>';
+      }).join('');
+      return '<div class="checkbar warn" role="status">' + CHECK.mismatches.length + ' check difference' +
+        (CHECK.mismatches.length === 1 ? '' : 's') + ' against the server&rsquo;s board &mdash; this page shows the browser&rsquo;s values, differing rows carry a &Delta; badge.' +
+        '<details><summary>Show the differences</summary><ul>' + items + '</ul></details></div>';
+    }
+    return '<div class="checkbar off" role="status">The model could not re-run in this browser (' + esc(CHECK_ERROR || 'unknown error') +
+      '), so this page shows the server&rsquo;s precomputed board &middot; ' + sha + '</div>';
+  }
+  function mismatchSlugs() {
+    var bad = {};
+    if (CHECK) CHECK.mismatches.forEach(function (mm) { bad[mm.slug] = true; });
+    return bad;
+  }
+
 
   // ---------- formatting ----------
   function esc(s) {
@@ -125,7 +238,8 @@
   function footer() {
     return '<footer>Source: ' + esc(DATA.source) + ' &middot; ' + DATA.protocol_count + ' protocols at a $' +
       (DATA.floor_usd / 1e6) + 'M floor &middot; model ' + esc(DATA.model_version) + ', priced from ' + DATA.peer_count +
-      ' trading peers &middot; implied value is a conditional value at peer pricing, not a launch forecast.</footer>';
+      ' trading peers &middot; implied value is a conditional value at peer pricing, not a launch forecast.' +
+      '<br>model sha256 ' + RAW.meta.model_sha + ' &middot; snapshot sha256 ' + RAW.meta.snapshot_sha + '</footer>';
   }
 
   // ---------- board ----------
@@ -193,6 +307,7 @@
         '</tr></thead><tbody>';
       rows.forEach(function (r) {
         var tag = r.watchlist ? '<span class="tag watch">WATCHLIST</span>' : '<span class="tag early">EARLY FIND</span>';
+        if (mismatchSlugs()[r.slug]) tag += ' <span class="tag delta" title="This row differs from the server board">&Delta;</span>';
         html += '<tr data-slug="' + esc(r.slug) + '" tabindex="0">' +
           '<td class="rank">' + r.rank + '</td>' +
           '<td class="who"><span class="name">' + esc(r.name) + '</span>' + tag + '<span class="sub">' + esc(r.category || 'Uncategorized') + '</span></td>' +
@@ -277,7 +392,8 @@
       '<div class="record">' +
       '<div class="cell"><div class="k">TVL</div><div class="v">' + fmtUsd(r.tvl_usd) + '</div></div>' +
       '<div class="cell"><div class="k">TVL change, 7d</div><div class="v">' + fmtPct(r.change_7d) + '</div></div>' +
-      '<div class="cell"><div class="k">Implied value</div><div class="v">' + fmtUsd(r.implied_value_usd) + '</div></div>' +
+      '<div class="cell"><div class="k">Implied value</div><div class="v">' + fmtUsd(r.implied_value_usd) +
+      (mismatchSlugs()[r.slug] ? ' <s class="server-val" title="The server board&rsquo;s value">' + fmtUsd((RAW.board.filter(function (x) { return x.slug === r.slug; })[0] || {}).implied_value_usd) + '</s>' : '') + '</div></div>' +
       '<div class="cell"><div class="k">Category multiple</div><div class="v">' + fmtMult(m.category_multiple) + '</div></div>' +
       '<div class="cell"><div class="k">On record since</div><div class="v">' + (r.listed_at || 'not recorded') + '</div></div>' +
       '<div class="cell"><div class="k">Age with no token</div><div class="v">' + (m.age_days === null ? 'n/a' : m.age_days + ' days') + '</div></div>' +
@@ -314,10 +430,11 @@
     else if (st.view === 'method') html = methodView(st);
     else if (st.view === 'protocol') html = detailView(st);
     else html = boardView(st);
-    root.innerHTML = html;
+    root.innerHTML = checkBar() + html;
     root.setAttribute('aria-busy', 'false');
     wireTable(st);
     wireControls(st);
+    window.__MODEL_READY__ = true;
   }
   function wireTable(st) {
     root.querySelectorAll('[data-go]').forEach(function (node) {

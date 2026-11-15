@@ -164,3 +164,13 @@ footer {
   h1 { font-size: 24px; }
   td.hideable, th.hideable { display: none; }
 }
+
+/* The self-check bar: the browser's re-pricing against the server's board. */
+.checkbar { border-radius: 10px; padding: 10px 14px; margin: 0 0 18px; font-size: 13.5px; line-height: 1.45; }
+.checkbar.ok { background: #e5f4e3; color: #1d5c1a; border: 1px solid #9fd09a; }
+.checkbar.warn { background: #fdf0d5; color: #7a5200; border: 1px solid #e3c878; }
+.checkbar.off { background: #eceff1; color: #455a64; border: 1px solid #b0bec5; }
+.checkbar details { margin-top: 6px; }
+.checkbar summary { cursor: pointer; font-weight: 600; }
+.tag.delta { background: #b3261e; color: #fff; }
+.server-val { color: #b3261e; font-size: 13px; }

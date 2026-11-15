@@ -11,9 +11,10 @@
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../token-radar-01-kit/input/snapshot.json
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { boardIssue, buildRadar, dataScript, parseSnapshot } from './lib/model.ts';
+import { boardIssue, buildRadar, buildRaw, dataScript, parseSnapshot } from './lib/model.ts';
 import { buildDossier } from './vendor/makefun-board.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -40,17 +41,34 @@ if (!existsSync(inputFile)) {
 }
 const out = arg('output', process.env.MAKEFUN_OUTPUT_DIR ?? '/output');
 
-const snapshot = parseSnapshot(readFileSync(inputFile, 'utf8'));
-const { board, radar } = buildRadar(snapshot);
+const snapBytes = readFileSync(inputFile);
+const snapshotSha = createHash('sha256').update(snapBytes).digest('hex');
+const snapshot = parseSnapshot(snapBytes.toString('utf8'));
+const { board, radar, result } = buildRadar(snapshot) as {
+  board: ReturnType<typeof buildRadar>['board'];
+  radar: ReturnType<typeof buildRadar>['radar'];
+  result: { stats: Record<string, number> };
+};
 const issue = boardIssue(board, snapshot);
 if (issue !== null) {
   process.stderr.write(`token radar: the model wrote a board the gate refuses: ${issue}\n`);
   process.exit(1);
 }
 
+// The model's own hash: the dashboard's model.js is this file's bytes, and the page, the board
+// and the dossier all name the same two hashes (the model's and the snapshot's).
+const coreBytes = readFileSync(join(here, 'lib/model-core.js'));
+const modelSha = createHash('sha256').update(coreBytes).digest('hex');
+const raw = buildRaw(snapshot, snapshotSha);
+const rawBytes = Buffer.byteLength(JSON.stringify(raw), 'utf8');
+if (rawBytes > 150_000) {
+  process.stderr.write(`token radar: the raw model input is ${rawBytes} bytes, over the 150000 the dashboard budget allows\n`);
+  process.exit(1);
+}
+
 mkdirSync(out, { recursive: true });
-writeFileSync(join(out, 'board.json'), `${JSON.stringify({ rows: board })}\n`);
-writeFileSync(join(out, 'data.js'), dataScript(radar));
+writeFileSync(join(out, 'board.json'), `${JSON.stringify({ meta: { model_version: radar.model_version, model_sha: modelSha, snapshot_sha: snapshotSha }, rows: board })}\n`);
+writeFileSync(join(out, 'data.js'), dataScript(snapshot, board, radar.live, result, modelSha, snapshotSha, raw));
 
 /** Copy one directory's regular files into `to`, skipping names that start with a dot. */
 function copyFiles(from: string, to: string): string[] {
@@ -68,6 +86,7 @@ function copyFiles(from: string, to: string): string[] {
 }
 
 copyFiles(join(here, 'dashboard'), join(out, 'dashboard'));
+writeFileSync(join(out, 'dashboard', 'model.js'), coreBytes);
 const shots = copyFiles(join(here, 'screenshots'), join(out, 'screenshots'));
 if (shots.length < 3) {
   process.stderr.write(`token radar: screenshots/ holds ${shots.length} image${shots.length === 1 ? '' : 's'}: hand in 3, the board, a detail view and a filtered view\n`);
