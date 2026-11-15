@@ -55,3 +55,7 @@ node scripts/lint-hardcode.mjs <output-dir> <snapshot.json>
 coverage, farm steps, screenshots, dossier byte-compare) and reports each.
 `lint-hardcode.mjs` fails if any figure the run produced appears as a hand-written literal in
 the dashboard sources or this README, or if the model core names any protocol in the snapshot.
+`node scripts/test-core.mjs` unit-tests the model's median, shrinkage weights, category cap,
+quality ladder and group coverage against the snapshot. Rebuilding from a clean checkout
+reproduces the board row for row; only the meta block's model hash changes when the model
+source itself has changed since a comparison build.
