@@ -60,6 +60,8 @@ export interface ModelConstants {
   unknown_age_days: number;
   breadth_per_chain: number;
   breadth_max_extra: number;
+  k_thin_base: number;
+  floor_tvl: number;
 }
 
 export const MODEL: ModelConstants = {
@@ -75,6 +77,8 @@ export const MODEL: ModelConstants = {
   unknown_age_days: core.PARAMS.unknown_age_days,
   breadth_per_chain: core.PARAMS.breadth_per_chain,
   breadth_max_extra: core.PARAMS.breadth_max_extra,
+  k_thin_base: core.PARAMS.k_thin_base,
+  floor_tvl: core.PARAMS.floor_tvl,
 };
 
 /** The model's version label, stated on the dashboard. */
@@ -398,6 +402,10 @@ export interface BoardRow {
     maturity_multiplier: number;
     breadth_multiplier: number;
     age_days: number | null;
+    quality: string;
+    shrink_w: number;
+    group: string;
+    capped: boolean;
   };
   farm_steps: string[];
 }
@@ -452,6 +460,7 @@ function toBoardRow(entry: { row: SnapshotProtocol; price: never; rank: number }
   const v = entry.price as {
     implied: number; category: string; peers: number; multiple: number;
     growth_pct: number; growth_multiplier: number; maturity_multiplier: number; breadth_multiplier: number; age_days: number | null;
+    quality: string; group: string; shrink: { w: number; capped: boolean };
   };
   return {
     rank: entry.rank,
@@ -478,6 +487,10 @@ function toBoardRow(entry: { row: SnapshotProtocol; price: never; rank: number }
       maturity_multiplier: round4(v.maturity_multiplier),
       breadth_multiplier: round4(v.breadth_multiplier),
       age_days: v.age_days,
+      quality: v.quality,
+      shrink_w: round4(v.shrink.w),
+      group: v.group,
+      capped: v.shrink.capped,
     },
     farm_steps: farmSteps(p, v.age_days),
   };

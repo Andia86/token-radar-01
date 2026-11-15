@@ -36,10 +36,13 @@ The run is deterministic: two runs over the same snapshot write byte-identical o
 
 `implied = TVL × M(category) × G(growth) × A(maturity) × B(breadth)`. M is the median
 market-cap/TVL of the snapshot's 128 trading peers in the category, each peer ratio winsorized to
-[0.02, 4], the median shrunk toward the global peer median (0.223) with weight K = 6 against the
-peer count; peerless categories price at the global median. G counts the clamped seven-day TVL
+[0.02, 4], the median shrunk in log space toward its category group's multiple and then the
+global peer median (0.214), with weight K = 6 against the peer count, a stronger pull below
+3 peers, and a cap at 1.5× the group's 75th percentile; peerless categories borrow their
+group's multiple. Every category multiple carries a quality grade from its peer count (solid ≥5,
+thin 3–4, very-thin 1–2, borrowed 0). G counts the clamped seven-day TVL
 change (-60%…+120%) at half weight; A runs 0.60→1.00 over three years on record; B adds 3% per
-extra chain, capped at 8. No protocol is named in the model. Model version: peer-median-1.
+extra chain, capped at 8. No protocol is named in the model. Model version: peer-median-2.
 
 ## Check
 

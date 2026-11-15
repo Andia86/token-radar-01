@@ -175,5 +175,10 @@ footer {
 .checkbar summary { cursor: pointer; font-weight: 600; }
 .tag.delta { background: #b3261e; color: #fff; }
 .tag.floor { color: #d97706; border: 1px solid #d97706; }
+.qdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: baseline; }
+.q-solid { background: #2e9e4f; }
+.q-thin { background: #e0a100; }
+.q-very-thin { background: #d96c00; }
+.q-borrowed { background: #9a9a9a; }
 .tag.tokened { color: var(--faint); border: 1px solid var(--line); }
 .server-val { color: #b3261e; font-size: 13px; }

@@ -62,7 +62,7 @@
             category: v.category, peer_count: v.peers, category_multiple: round4(v.multiple),
             growth_pct: v.growth_pct, growth_multiplier: round4(v.growth_multiplier),
             maturity_multiplier: round4(v.maturity_multiplier), breadth_multiplier: round4(v.breadth_multiplier),
-            age_days: v.age_days,
+            age_days: v.age_days, quality: v.quality, shrink_w: round4(v.shrink.w), group: v.group, capped: v.shrink.capped,
           },
         });
         return row;
@@ -75,6 +75,9 @@
           category: category, peers: price.peers,
           median_raw: price.median_raw === null ? null : round4(price.median_raw),
           multiple: round4(price.multiple), subjects: subjectCount[category],
+          group: price.group || window.ModelCore.groupOf(category),
+          quality: price.quality || window.ModelCore.qualityFor(price.peers),
+          w: price.shrink ? round4(price.shrink.w) : 0,
         };
       }).sort(function (a, b) { return b.subjects - a.subjects || (a.category < b.category ? -1 : 1); });
       DATA = Object.assign({}, fallback, {
@@ -253,7 +256,7 @@
   var state = {
     view: 'board',
     slug: '',
-    board: { q: '', cat: 'all', chain: 'all', watch: false, band: 'all', sort: 'rank', dir: -1 },
+    board: { q: '', cat: 'all', chain: 'all', watch: false, band: 'all', sort: 'rank', dir: -1, hideThin: false },
     tokened: { q: '', cat: 'all', sort: 'mcap', dir: -1 },
   };
   function boardHash(st) {
@@ -265,6 +268,7 @@
     if (st.band !== 'all') p.set('band', st.band);
     if (st.sort !== 'rank') p.set('sort', st.sort);
     if (st.dir === 1) p.set('dir', 'asc');
+    if (st.hideThin) p.set('thin', '1');
     var s = p.toString();
     return '#/' + (s ? '?' + s : '');
   }
@@ -291,6 +295,7 @@
         q: params.get('q') || '', cat: params.get('cat') || 'all', chain: params.get('chain') || 'all',
         watch: params.get('watch') === '1', band: params.get('band') || 'all',
         sort: params.get('sort') || 'rank', dir: params.get('dir') === 'asc' ? 1 : -1,
+        hideThin: params.get('thin') === '1',
       };
     }
     if (view === 'tokened') {
@@ -346,6 +351,7 @@
       if (st.cat !== 'all' && (r.category || 'Uncategorized') !== st.cat) return false;
       if (st.chain !== 'all' && r.chains.indexOf(st.chain) < 0) return false;
       if (st.watch && !r.watchlist) return false;
+      if (st.hideThin && r.model.peer_count < 3) return false;
       if (st.band === 'b1' && r.tvl_usd < 1e9) return false;
       if (st.band === 'b100' && (r.tvl_usd < 1e8 || r.tvl_usd >= 1e9)) return false;
       if (st.band === 'b25' && (r.tvl_usd < 2.5e7 || r.tvl_usd >= 1e8)) return false;
@@ -358,7 +364,8 @@
     });
     var key = { rank: 'implied_value_usd', value: 'implied_value_usd', tvl: 'tvl_usd', change: 'change_7d', age: 'age_days' }[st.sort] || 'implied_value_usd';
     rows.sort(function (a, b) {
-      var av = a[key], bv = b[key];
+      var av = st.sort === 'peers' ? a.model.peer_count : a[key];
+      var bv = st.sort === 'peers' ? b.model.peer_count : b[key];
       if (av === null || av === undefined) return 1;
       if (bv === null || bv === undefined) return -1;
       if (av !== bv) return (av - bv) * (st.sort === 'rank' ? -1 : st.dir);
@@ -375,6 +382,7 @@
       sortHead(st, 'rank', '#') + '<th>Protocol</th>' + sortHead(st, 'tvl', 'TVL', true) +
       sortHead(st, 'change', '7d', true) + sortHead(st, 'age', 'Age', true) + '<th class="hideable">Chains</th>' +
       sortHead(st, 'value', 'Implied value', true) + '<th class="num hideable">Multiple</th>' +
+      sortHead(st, 'peers', 'Peers', true) +
       '</tr></thead><tbody>';
     rows.forEach(function (r) {
       var tag = boardTags(r);
@@ -388,6 +396,7 @@
         '<td class="hideable">' + esc(chainList(r.chains)) + '</td>' +
         '<td class="num value">' + fmtShort(r.implied_value_usd) + '</td>' +
         '<td class="num hideable">' + fmtMult(r.model.category_multiple) + '</td>' +
+        '<td class="num"><span class="qdot q-' + r.model.quality + '" title="Peer evidence: ' + r.model.quality + ' (' + r.model.peer_count + ' trading peers, category weight ' + r.model.shrink_w + ')"></span>' + r.model.peer_count + '</td>' +
         '</tr>';
     });
     return html + '</tbody></table>';
@@ -414,6 +423,7 @@
       '<select id="chain" aria-label="Filter by chain">' + options(chains, st.chain, 'All chains') + '</select>' +
       '<select id="band" aria-label="Filter by TVL band">' + bandHtml + '</select>' +
       '<label class="check"><input type="checkbox" id="watch"' + (st.watch ? ' checked' : '') + '> Watchlist only</label>' +
+      '<label class="check"><input type="checkbox" id="thin"' + (st.hideThin ? ' checked' : '') + '> Hide thin (peers &lt; 3)</label>' +
       '</div>';
   }
   function boardView() {
@@ -530,22 +540,27 @@
     var html = masthead() + '<div class="controls">' + tabs() + '</div><div class="method-body">';
     if (src) html += src.innerHTML;
     var m = DATA.model;
-    html += '<div class="formula">implied = TVL &times; M(category) &times; G &times; A &times; B &nbsp;&middot;&nbsp; M = (n &times; median + ' +
-      m.shrink_k + ' &times; ' + DATA.global_median.toFixed(3) + ') / (n + ' + m.shrink_k + ') &nbsp;&middot;&nbsp; G = 1 + clamp(7d, ' +
+    html += '<div class="formula">implied = TVL &times; M(category) &times; G &times; A &times; B &nbsp;&middot;&nbsp; M = exp(w<sub>c</sub> &times; ln(median) + (1 &minus; w<sub>c</sub>) &times; ln(group multiple)), ' +
+      'group = exp(w<sub>g</sub> &times; ln(group median) + (1 &minus; w<sub>g</sub>) &times; ln(' + DATA.global_median.toFixed(3) + ')), w = n / (n + K<sub>eff</sub>), K = ' +
+      m.shrink_k + ', K<sub>eff</sub> = K below ' + m.k_thin_base + ' peers scaled by ' + m.k_thin_base + '/n, M capped at 1.5 &times; the group&rsquo;s 75th percentile &nbsp;&middot;&nbsp; G = 1 + clamp(7d, ' +
       m.growth_floor + ', +' + m.growth_cap + ') &times; ' + m.growth_weight + ' &nbsp;&middot;&nbsp; A = ' + m.maturity_floor + ' + ' +
       m.maturity_range + ' &times; age/' + m.maturity_days + 'd &nbsp;&middot;&nbsp; B = 1 + ' + m.breadth_per_chain + ' &times; extra chains (max ' + m.breadth_max_extra + ')</div>';
     html += '<h2 class="sec">What a dollar of TVL prices at, by category</h2>' +
       '<p>Peer medians are of market cap over TVL across the snapshot&rsquo;s ' + DATA.peer_count + ' trading protocols, each peer ratio first capped to [' +
-      m.winsor_lo + ', ' + m.winsor_hi + ']. The multiple used blends the category median with the global median of ' + DATA.global_median.toFixed(3) +
-      ', weighted by the peer count behind it.</p>' +
-      '<table class="peer-table"><thead><tr><th>Category</th><th class="num">Peers</th><th class="num">Peer median (raw)</th><th class="num">Multiple used</th><th class="num">Protocols ranked</th></tr></thead><tbody>';
+      m.winsor_lo + ', ' + m.winsor_hi + ']. The multiple used shrinks the category median toward its category group&rsquo;s multiple in log space, ' +
+      'and the group toward the global median of ' + DATA.global_median.toFixed(3) + ', each in proportion to how few peers stand behind it; below ' +
+      m.k_thin_base + ' peers the pull strengthens, and no category may price above 1.5 times its group&rsquo;s 75th percentile. The quality word ' +
+      'grades the evidence: solid at five peers or more, thin at three or four, very-thin at one or two, borrowed when a category has none and takes ' +
+      'its group&rsquo;s multiple outright.</p>' +
+      '<table class="peer-table"><thead><tr><th>Category</th><th>Group</th><th class="num">Peers</th><th class="num">Peer median (raw)</th><th class="num">Multiple used</th><th>Quality</th><th class="num">Protocols ranked</th></tr></thead><tbody>';
     DATA.categories.forEach(function (c) {
-      html += '<tr><td class="cat">' + esc(c.category) + '</td><td class="num">' + (c.peers === 0 ? 'none' : c.peers) + '</td>' +
+      html += '<tr><td class="cat">' + esc(c.category) + '</td><td>' + esc(c.group || '') + '</td><td class="num">' + (c.peers === 0 ? 'none' : c.peers) + '</td>' +
         '<td class="num">' + (c.median_raw === null ? '—' : 'x' + c.median_raw.toFixed(3)) + '</td>' +
-        '<td class="num">x' + c.multiple.toFixed(3) + (c.peers === 0 ? ' (global)' : '') + '</td>' +
+        '<td class="num">x' + c.multiple.toFixed(3) + (c.peers === 0 ? ' (group)' : '') + '</td>' +
+        '<td><span class="qdot q-' + (c.quality || 'borrowed') + '"></span>' + esc(c.quality || 'borrowed') + '</td>' +
         '<td class="num">' + c.subjects + '</td></tr>';
     });
-    html += '</tbody></table><p class="note">A category with no trading peers prices at the global median, and every detail view says when that is the case for its row.</p></div>';
+    html += '</tbody></table><p class="note">A category with no trading peers borrows its group&rsquo;s multiple, and every detail view says when that is the case for its row.</p></div>';
     return html + footer();
   }
 
@@ -553,8 +568,9 @@
   function whyValue(r) {
     var m = r.model;
     var peerNote = m.peer_count === 0
-      ? 'no protocol in its category records a token, so it prices at the global peer median of ' + DATA.global_median.toFixed(3)
-      : 'the median peer in its category trades at x' + m.category_multiple.toFixed(3) + ' of TVL after blending ' + m.peer_count + ' peer' + (m.peer_count === 1 ? '' : 's') + ' toward the global median';
+      ? 'no protocol in its category records a token, so it borrows the ' + esc(m.group) + ' group multiple outright'
+      : 'the median peer in its category trades at x' + m.category_multiple.toFixed(3) + ' of TVL; ' + m.peer_count + ' peer' + (m.peer_count === 1 ? '' : 's') +
+        ' stand behind that figure (' + m.quality + ' evidence), so the board keeps weight ' + m.shrink_w + ' on the category&rsquo;s own median and puts the rest on the ' + esc(m.group) + ' group, itself shrunk toward the global median';
     return '<b>' + esc(r.name) + '</b> holds ' + fmtUsd(r.tvl_usd) + ' of TVL in ' + esc(m.category) + ', where ' + peerNote +
       '. Its seven-day TVL change counts at ' + fmtPct(m.growth_pct) + ' after clamping, half weight; it has run ' +
       (m.age_days === null ? 'an unrecorded time (counted as one year)' : m.age_days + ' days') + ' with no token on record, and it runs on ' +
@@ -582,7 +598,7 @@
       '<div class="cell"><div class="k">On record since</div><div class="v">' + (r.listed_at || 'not recorded') + '</div></div>' +
       '<div class="cell"><div class="k">Age with no token</div><div class="v">' + (m.age_days === null ? 'n/a' : m.age_days + ' days') + '</div></div>' +
       '<div class="cell"><div class="k">Chains</div><div class="v">' + r.chains.length + '</div></div>' +
-      '<div class="cell"><div class="k">Trading peers in category</div><div class="v">' + (m.peer_count === 0 ? 'none' : m.peer_count) + '</div></div>' +
+      '<div class="cell"><div class="k">Trading peers in category</div><div class="v">' + (m.peer_count === 0 ? 'none — group multiple' : m.peer_count + ' (' + m.quality + ')') + '</div></div>' +
       '</div>' +
       '<p class="why">Chains on record: ' + esc(chainList(r.chains)) + '</p>' +
       '<h2 class="sec">Why this value</h2>' +
@@ -624,7 +640,7 @@
     wireSortButtons('board-host', state.board, boardHash);
     root.querySelectorAll('#board-host [data-clear]').forEach(function (btn) {
       btn.addEventListener('click', function () {
-        state.board = { q: '', cat: 'all', chain: 'all', watch: false, band: 'all', sort: 'rank', dir: -1 };
+        state.board = { q: '', cat: 'all', chain: 'all', watch: false, band: 'all', sort: 'rank', dir: -1, hideThin: false };
         if (window.location.hash === boardHash(state.board)) render(); else goto(boardHash(state.board));
       });
     });
@@ -648,6 +664,8 @@
     });
     var watch = document.getElementById('watch');
     if (watch) watch.addEventListener('change', function () { state.board.watch = watch.checked; goto(boardHash(state.board)); });
+    var thin = document.getElementById('thin');
+    if (thin) thin.addEventListener('change', function () { state.board.hideThin = thin.checked; goto(boardHash(state.board)); });
   }
   function wireTokenedRegion() { wireSortButtons('tokened-host', state.tokened, tokenedHash); wireCommonClear(); }
   function wireTokened() {

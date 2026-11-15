@@ -113,6 +113,7 @@ if (existsSync(tplPath)) {
     floor_m: String(snapshot.floor_usd / 1e6),
     global_median: (stats.globalMedian as number).toFixed(3),
     shrink_k: String(MODEL.shrink_k),
+    k_thin_base: String(MODEL.k_thin_base),
     winsor_lo: String(MODEL.winsor_lo),
     winsor_hi: String(MODEL.winsor_hi),
     growth_floor: String(MODEL.growth_floor),
