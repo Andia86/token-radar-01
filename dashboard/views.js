@@ -5,6 +5,19 @@
   // registers the views on window.__RADAR_VIEWS__ and starts the page. The split exists so
   // the dossier's path order shows the model (a-model.js) first and these views last.
   var C = window.__RADAR_CTX__;
+  if (!C) {
+    // app.js did not load (or died before leaving its context): no state, no data,
+    // no board builder. Say so in the page instead of throwing on the destructure
+    // below — a missing first script must not take the whole page down with it.
+    var showMissingApp = function () {
+      var host = document.getElementById('view');
+      if (host) host.innerHTML = '<div class="checkbar off" role="status">app.js did not load, so the radar cannot render in this browser. The server&rsquo;s board is in board.json, beside this page.</div>';
+      window.__MODEL_READY__ = true;
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', showMissingApp);
+    else showMissingApp();
+    return;
+  }
   var esc = C.esc, fmtUsd = C.fmtUsd, fmtShort = C.fmtShort, fmtPct = C.fmtPct, fmtAge = C.fmtAge,
     fmtMult = C.fmtMult, chainList = C.chainList,
     capitalForTvl = C.capitalForTvl, holdDaysForAge = C.holdDaysForAge, PLAYBOOKS = C.PLAYBOOKS,
@@ -328,7 +341,7 @@
     wireSortButtons('board-host', state.board, boardHash);
     root.querySelectorAll('#board-host [data-clear]').forEach(function (btn) {
       btn.addEventListener('click', function () {
-        state.board = { q: '', cat: 'all', chain: 'all', watch: false, band: 'all', sort: 'rank', dir: -1, hideThin: false };
+        state.board = { q: '', cat: 'all', chain: 'all', watch: false, band: 'all', sort: 'rank', dir: 1, hideThin: false };
         if (window.location.hash === boardHash(state.board)) render(); else goto(boardHash(state.board));
       });
     });

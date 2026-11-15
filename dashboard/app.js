@@ -105,7 +105,7 @@
     var sha = 'model ' + meta.model_sha.slice(0, 12) + ' &middot; snapshot ' + meta.snapshot_sha.slice(0, 12);
     if (CHECK && CHECK.ok) {
       return '<div class="checkbar ok" role="status">Browser re-priced ' + CHECK.matched + '/' + CHECK.total +
-        ' rows from the snapshot&rsquo;s raw fields &mdash; every value matches the server&rsquo;s board &middot; ' + sha + '</div>';
+        ' rows from the snapshot&rsquo;s raw fields &mdash; the priced fields (value, rank, multiple, peers) match the server&rsquo;s board, row for row &middot; ' + sha + '</div>';
     }
     if (CHECK) {
       var bad = {};
@@ -256,7 +256,7 @@
   var state = {
     view: 'board',
     slug: '',
-    board: { q: '', cat: 'all', chain: 'all', watch: false, band: 'all', sort: 'rank', dir: -1, hideThin: false },
+    board: { q: '', cat: 'all', chain: 'all', watch: false, band: 'all', sort: 'rank', dir: 1, hideThin: false },
     tokened: { q: '', cat: 'all', sort: 'mcap', dir: -1 },
   };
   function boardHash(st) {
@@ -268,6 +268,7 @@
     if (st.band !== 'all') p.set('band', st.band);
     if (st.sort !== 'rank') p.set('sort', st.sort);
     if (st.dir === 1) p.set('dir', 'asc');
+    else if (st.sort === 'rank') p.set('dir', 'desc');
     if (st.hideThin) p.set('thin', '1');
     var s = p.toString();
     return '#/' + (s ? '?' + s : '');
@@ -291,10 +292,12 @@
     state.view = view;
     state.slug = view === 'protocol' ? decodeURIComponent(parts[1] || '') : '';
     if (view === 'board') {
+      var bsort = params.get('sort') || 'rank';
       state.board = {
         q: params.get('q') || '', cat: params.get('cat') || 'all', chain: params.get('chain') || 'all',
         watch: params.get('watch') === '1', band: params.get('band') || 'all',
-        sort: params.get('sort') || 'rank', dir: params.get('dir') === 'asc' ? 1 : -1,
+        // Rank's resting direction is 1 (rank 1 first); every other column rests at -1.
+        sort: bsort, dir: params.get('dir') === 'asc' ? 1 : params.get('dir') === 'desc' ? -1 : bsort === 'rank' ? 1 : -1,
         hideThin: params.get('thin') === '1',
       };
     }
@@ -341,7 +344,10 @@
   }
   function sortHead(st, key, label, numeric) {
     var active = st.sort === key || (key === 'value' && st.sort === 'rank');
-    var aria = active ? (st.dir === 1 ? 'asc' : 'desc') : 'none';
+    // Rank ascending is value descending: when rank is the sort, the value column
+    // runs opposite to dir, and its aria-sort has to say so.
+    var dir = key === 'value' && st.sort === 'rank' ? -st.dir : st.dir;
+    var aria = active ? (dir === 1 ? 'asc' : 'desc') : 'none';
     return '<th' + (numeric ? ' class="num"' : '') + '><button type="button" class="sort" data-sort="' + key + '" aria-sort="' + aria + '">' + label + '</button></th>';
   }
 
@@ -364,11 +370,15 @@
     });
     var key = { rank: 'implied_value_usd', value: 'implied_value_usd', tvl: 'tvl_usd', change: 'change_7d', age: 'age_days' }[st.sort] || 'implied_value_usd';
     rows.sort(function (a, b) {
+      // Rank sorts by the rank itself: dir 1 is rank 1 first, dir -1 turns the board
+      // over. (It used to be pinned at rank-ascending whatever dir said, so clicking
+      // the rank header changed the aria-sort but never the order.)
+      if (st.sort === 'rank') return (a.rank - b.rank) * st.dir;
       var av = st.sort === 'peers' ? a.model.peer_count : a[key];
       var bv = st.sort === 'peers' ? b.model.peer_count : b[key];
       if (av === null || av === undefined) return 1;
       if (bv === null || bv === undefined) return -1;
-      if (av !== bv) return (av - bv) * (st.sort === 'rank' ? -1 : st.dir);
+      if (av !== bv) return (av - bv) * st.dir;
       return a.rank - b.rank;
     });
     return rows;
@@ -446,6 +456,83 @@
     var count = document.getElementById('board-count');
     if (count) count.textContent = boardCountText(rows);
     if (window.__RADAR_VIEWS__) window.__RADAR_VIEWS__.wireBoardRegion();
+    else wireBoardRegionFallback();
+  }
+
+  // ---------- the board without views.js ----------
+  // If views.js fails to load, the board still has to work: the wiring below is the
+  // same wiring views.js would have done (sort, clear, row navigation, the check
+  // chain), done here from app.js's own pieces. The chain expansion falls back to
+  // the one-line multiplication — the step-by-step chain is views.js's work — and
+  // render() shows a notice saying the other views are unavailable.
+  function fallbackChainHtml(r) {
+    return '<div class="chainline">' + fmtShort(r.tvl_usd) + ' TVL &times; ' + r.model.category_multiple.toFixed(3) + ' multiple &times; ' +
+      r.model.growth_multiplier.toFixed(3) + ' growth &times; ' + r.model.maturity_multiplier.toFixed(3) + ' maturity &times; ' +
+      r.model.breadth_multiplier.toFixed(3) + ' breadth = ' + fmtShort(r.implied_value_usd) +
+      ' (the step-by-step check chain needs views.js, which did not load)</div>';
+  }
+  function wireBoardRegionFallback() {
+    wireSortButtons('board-host', state.board, boardHash);
+    root.querySelectorAll('#board-host [data-clear]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        state.board = { q: '', cat: 'all', chain: 'all', watch: false, band: 'all', sort: 'rank', dir: 1, hideThin: false };
+        if (window.location.hash === boardHash(state.board)) render(); else goto(boardHash(state.board));
+      });
+    });
+    root.querySelectorAll('#board-host tr[data-slug]').forEach(function (tr) {
+      function open() { goto('#/protocol/' + encodeURIComponent(tr.getAttribute('data-slug'))); }
+      tr.addEventListener('click', open);
+      tr.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    });
+    root.querySelectorAll('#board-host .xtoggle').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var tr = btn.closest('tr');
+        var next = tr.nextElementSibling;
+        if (next && next.classList.contains('xrow')) {
+          next.remove();
+          btn.setAttribute('aria-expanded', 'false');
+          btn.innerHTML = '&#9656;';
+          return;
+        }
+        var slug = btn.getAttribute('data-x');
+        var row = null;
+        DATA.rows.forEach(function (r) { if (r.slug === slug) row = r; });
+        if (!row) return;
+        var xr = document.createElement('tr');
+        xr.className = 'xrow';
+        xr.innerHTML = '<td colspan="9">' + fallbackChainHtml(row) + '</td>';
+        tr.after(xr);
+        btn.setAttribute('aria-expanded', 'true');
+        btn.innerHTML = '&#9662;';
+      });
+    });
+  }
+  function wireBoardFallback() {
+    wireBoardRegionFallback();
+    var q = document.getElementById('q');
+    if (q) q.addEventListener('input', debounce(function () {
+      state.board.q = q.value;
+      window.history.replaceState(null, '', boardHash(state.board));
+      renderBoardRegion();
+    }, 120));
+    ['cat', 'chain', 'band'].forEach(function (id) {
+      var sel = document.getElementById(id);
+      if (sel) sel.addEventListener('change', function () { state.board[id] = sel.value; goto(boardHash(state.board)); });
+    });
+    var watch = document.getElementById('watch');
+    if (watch) watch.addEventListener('change', function () { state.board.watch = watch.checked; goto(boardHash(state.board)); });
+    var thin = document.getElementById('thin');
+    if (thin) thin.addEventListener('change', function () { state.board.hideThin = thin.checked; goto(boardHash(state.board)); });
+  }
+  // The visible notice for the degraded page: no views.js means no tokened, method
+  // or detail views — the board only, and it says so, instead of silently showing
+  // the board under another view's URL.
+  function viewsNotice() {
+    if (window.__RADAR_VIEWS__) return '';
+    var asked = state.view === 'board' ? '' : 'The ' + state.view + ' view you asked for needs it, so the board is shown instead. ';
+    return '<div class="checkbar warn" role="status">views.js did not load, so the Tokened, Method and detail views are unavailable. ' +
+      asked + 'The board below is complete: sorting, filtering, search and the per-row check chain all work.</div>';
   }
 
 
@@ -466,7 +553,7 @@
       btn.addEventListener('click', function () {
         var key = btn.getAttribute('data-sort');
         if (st.sort === key || (key === 'value' && st.sort === 'rank')) st.dir = st.dir === 1 ? -1 : 1;
-        else { st.sort = key; st.dir = -1; }
+        else { st.sort = key; st.dir = key === 'rank' ? 1 : -1; }
         goto(hashOf(st));
       });
     });
@@ -487,11 +574,15 @@
     else if (state.view === 'method' && VIEWS) html = VIEWS.methodView();
     else if (state.view === 'protocol' && VIEWS) html = VIEWS.detailView();
     else html = boardView();
-    root.innerHTML = checkBar() + html;
+    root.innerHTML = checkBar() + viewsNotice() + html;
     root.setAttribute('aria-busy', 'false');
     wireCommon();
-    if (state.view === 'board' && VIEWS) VIEWS.wireBoard();
-    if (state.view === 'tokened' && VIEWS) VIEWS.wireTokened();
+    if (VIEWS) {
+      if (state.view === 'board') VIEWS.wireBoard();
+      if (state.view === 'tokened') VIEWS.wireTokened();
+    } else {
+      wireBoardFallback();
+    }
     window.__MODEL_READY__ = true;
   }
 
