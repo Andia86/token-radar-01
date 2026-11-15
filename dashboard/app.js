@@ -155,6 +155,36 @@
     });
   }
 
+  // ---------- membership & exclusion reasons ----------
+  // A row's badges are computed from its record, never from which list it arrived on:
+  // the floor badge appears only when the TVL is actually under the floor, and a board-only
+  // row above the floor says why it is not on the watchlist instead of borrowing the floor's
+  // label. (The old detail page stamped every non-watchlist row "below the $50M floor",
+  // including one holding $2.7B.)
+  function floorTvl() { return (window.ModelCore && window.ModelCore.PARAMS.floor_tvl) || DATA.floor_usd; }
+  function floorLabel() { var f = floorTvl(); return f >= 1e9 ? '$' + (f / 1e9) + 'B' : '$' + (f / 1e6) + 'M'; }
+  function membership(r) { return r.watchlist ? 'watchlist' : 'board-only'; }
+  function exclusionReasons(r) {
+    var reasons = [];
+    if (r.tvl_usd < floorTvl()) {
+      reasons.push('Below the ' + floorLabel() + ' floor the watchlist is drawn at — the board ranks it anyway, and flags it');
+    } else if (!r.watchlist) {
+      reasons.push('Not on the snapshot&rsquo;s ' + DATA.watchlist_size + '-protocol watchlist: that list is the snapshot&rsquo;s fixed house list, and this protocol passes the same screen the list is drawn from');
+    }
+    return reasons;
+  }
+  function boardTags(r) {
+    var tag = r.watchlist
+      ? '<span class="tag watch">WATCHLIST</span>'
+      : '<span class="tag early">EARLY FIND</span>';
+    if (r.tvl_usd < floorTvl()) {
+      tag += ' <span class="tag floor" title="' + exclusionReasons(r)[0] + '">BELOW THE ' + floorLabel() + ' FLOOR</span>';
+    } else if (!r.watchlist) {
+      tag = '<span class="tag early" title="' + exclusionReasons(r)[0] + '">EARLY FIND</span>';
+    }
+    return tag;
+  }
+
   // ---------- formatting ----------
   function esc(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
@@ -347,7 +377,7 @@
       sortHead(st, 'value', 'Implied value', true) + '<th class="num hideable">Multiple</th>' +
       '</tr></thead><tbody>';
     rows.forEach(function (r) {
-      var tag = r.watchlist ? '<span class="tag watch">WATCHLIST</span>' : '<span class="tag early">EARLY FIND</span>';
+      var tag = boardTags(r);
       if (bad[r.slug]) tag += ' <span class="tag delta" title="This row differs from the server board">&Delta;</span>';
       html += '<tr data-slug="' + esc(r.slug) + '" tabindex="0">' +
         '<td class="rank">' + r.rank + '</td>' +
@@ -448,7 +478,7 @@
       '<th class="num hideable">Peers</th></tr></thead><tbody>';
     rows.forEach(function (r) {
       html += '<tr>' +
-        '<td class="who"><span class="name">' + esc(r.name) + '</span><span class="sub">' + esc(r.category) + '</span></td>' +
+        '<td class="who"><span class="name">' + esc(r.name) + '</span> <span class="tag tokened">TOKENED &middot; CONTROL</span><span class="sub">' + esc(r.category) + '</span></td>' +
         '<td class="mono">' + esc(r.symbol || '—') + '</td>' +
         '<td class="num">' + fmtShort(r.mcap_usd) + '</td>' +
         '<td class="num">' + fmtShort(r.implied) + '</td>' +
@@ -539,7 +569,10 @@
       '<div class="masthead"><p class="kicker">Rank ' + r.rank + ' of ' + DATA.board_size + ' &middot; ' + esc(r.slug) + '</p>' +
       '<h1>' + esc(r.name) + '</h1>' +
       '<p class="badges"><span class="badge">' + esc(r.category || 'Uncategorized') + '</span>' +
-      (r.watchlist ? '<span class="badge watch">ON THE WATCHLIST</span>' : '<span class="badge">BELOW THE $50M FLOOR</span>') +
+      (r.watchlist
+        ? '<span class="badge watch">ON THE WATCHLIST</span>'
+        : '<span class="badge" title="' + (exclusionReasons(r)[0] || '') + '">BOARD ONLY</span>') +
+      (r.tvl_usd < floorTvl() ? '<span class="badge floor">BELOW THE ' + floorLabel() + ' FLOOR</span>' : '') +
       '<span class="badge">RECORDS NO TOKEN</span></p></div>' +
       '<div class="record">' +
       '<div class="cell"><div class="k">TVL</div><div class="v">' + fmtUsd(r.tvl_usd) + '</div></div>' +

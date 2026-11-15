@@ -124,6 +124,7 @@ td.value { color: var(--accent); font-weight: 600; }
   border: 1px solid var(--line); border-radius: 3px; padding: 2px 8px; margin-right: 6px; color: var(--muted);
 }
 .badge.watch { color: var(--amber); border-color: var(--amber); }
+.badge.floor { color: #d97706; border-color: #d97706; }
 .record {
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
   background: var(--line-soft); border: 1px solid var(--line-soft); margin: 18px 0;
@@ -173,4 +174,6 @@ footer {
 .checkbar details { margin-top: 6px; }
 .checkbar summary { cursor: pointer; font-weight: 600; }
 .tag.delta { background: #b3261e; color: #fff; }
+.tag.floor { color: #d97706; border: 1px solid #d97706; }
+.tag.tokened { color: var(--faint); border: 1px solid var(--line); }
 .server-val { color: #b3261e; font-size: 13px; }
