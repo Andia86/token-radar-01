@@ -43,6 +43,7 @@
       early_size: RAW.board.filter(function (r) { return !r.watchlist; }).length,
       live_count: meta.stats.tokenedCount, live_size: RAW.live.length,
       categories: [], rows: RAW.board, live: RAW.live, model: meta.model,
+      max_peer_ratio: meta.stats.maxPeerRatioRaw,
     };
     DATA = fallback;
     if (typeof window.ModelCore === 'undefined') { CHECK_ERROR = 'model.js did not load'; return; }
@@ -82,6 +83,7 @@
         board_size: RESULT.stats.boardCount,
         early_size: localRows.filter(function (r) { return !r.watchlist; }).length,
         live_count: RESULT.stats.tokenedCount, categories: cats, rows: localRows,
+        max_peer_ratio: RESULT.stats.maxPeerRatioRaw,
       });
     } catch (err) {
       CHECK_ERROR = 'the model failed to run here: ' + (err && err.message ? err.message : err);
@@ -118,6 +120,40 @@
     return bad;
   }
 
+
+  // ---------- stated figures, from the one run ----------
+  // Every number the method prose states is filled from this run's stats and the model's own
+  // constants — the prose carries <span data-stat> placeholders, never literals, so a page can
+  // never again quote a figure the model did not produce. scripts/lint-hardcode.mjs enforces it.
+  function statValues() {
+    var m = DATA.model || {};
+    return {
+      board_count: DATA.board_size,
+      watchlist_size: DATA.watchlist_size,
+      not_ranked: DATA.protocol_count - DATA.board_size,
+      protocol_count: DATA.protocol_count,
+      peer_count: DATA.peer_count,
+      max_peer_ratio: DATA.max_peer_ratio === null || DATA.max_peer_ratio === undefined ? '—' : Math.round(DATA.max_peer_ratio),
+      winsor_lo: m.winsor_lo,
+      winsor_hi: m.winsor_hi,
+      global_median: DATA.global_median.toFixed(3),
+      growth_floor_abs: Math.abs(m.growth_floor),
+      growth_cap: m.growth_cap,
+      g_min: (1 + (m.growth_floor / 100) * m.growth_weight).toFixed(2),
+      g_max: (1 + (m.growth_cap / 100) * m.growth_weight).toFixed(2),
+      maturity_floor: Number(m.maturity_floor).toFixed(2),
+      maturity_max: (m.maturity_floor + m.maturity_range).toFixed(2),
+      b_max: (1 + m.breadth_per_chain * m.breadth_max_extra).toFixed(2),
+    };
+  }
+  function fillStats() {
+    if (!DATA) return;
+    var values = statValues();
+    document.querySelectorAll('[data-stat]').forEach(function (el) {
+      var key = el.getAttribute('data-stat');
+      if (Object.prototype.hasOwnProperty.call(values, key)) el.textContent = values[key];
+    });
+  }
 
   // ---------- formatting ----------
   function esc(s) {
@@ -606,6 +642,7 @@
       window.__MODEL_READY__ = true;
       return;
     }
+    fillStats();
     var html;
     if (state.view === 'tokened') html = tokenedView();
     else if (state.view === 'method') html = methodView();

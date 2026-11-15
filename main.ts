@@ -14,7 +14,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSyn
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { boardIssue, buildRadar, buildRaw, dataScript, parseSnapshot } from './lib/model.ts';
+import { MODEL, boardIssue, buildRadar, buildRaw, dataScript, parseSnapshot } from './lib/model.ts';
 import { buildDossier } from './vendor/makefun-board.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -97,6 +97,37 @@ for (const name of shots) {
     process.stderr.write(`token radar: screenshots/${name}: a name is letters, digits and . _ -, 1 to 128 characters\n`);
     process.exit(1);
   }
+}
+
+// The README is generated, never hand-edited: every figure in it is filled from this run's
+// stats and the model's constants, so the README cannot drift from the board it describes.
+const tplPath = join(here, 'README.tpl.md');
+if (existsSync(tplPath)) {
+  const stats = result.stats as Record<string, number>;
+  const values: Record<string, string> = {
+    board_count: String(stats.boardCount),
+    watchlist_size: String(stats.watchlistSize),
+    peer_count: String(stats.tokenedPeerCount),
+    protocol_count: String(stats.protocolCount),
+    tokened_count: String(stats.tokenedCount),
+    floor_m: String(snapshot.floor_usd / 1e6),
+    global_median: (stats.globalMedian as number).toFixed(3),
+    shrink_k: String(MODEL.shrink_k),
+    winsor_lo: String(MODEL.winsor_lo),
+    winsor_hi: String(MODEL.winsor_hi),
+    growth_floor: String(MODEL.growth_floor),
+    growth_cap: String(MODEL.growth_cap),
+    maturity_floor: MODEL.maturity_floor.toFixed(2),
+    maturity_max: (MODEL.maturity_floor + MODEL.maturity_range).toFixed(2),
+    breadth_pct: String(Math.round(MODEL.breadth_per_chain * 100)),
+    breadth_max_extra: String(MODEL.breadth_max_extra),
+    model_version: radar.model_version,
+  };
+  const rendered = readFileSync(tplPath, 'utf8').replace(/\{\{(\w+)\}\}/g, (whole, key: string) => {
+    if (!(key in values)) throw new Error(`README.tpl.md: no value for {{${key}}}`);
+    return values[key]!;
+  });
+  writeFileSync(join(here, 'README.md'), rendered);
 }
 
 // The dossier is written last: the scorer rebuilds it from this /output and compares bytes.
