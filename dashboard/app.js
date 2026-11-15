@@ -401,29 +401,8 @@
     });
     return html + '</tbody></table>';
   }
-  // The check chain under a board row: the multiplication that produced the row's value,
-  // computed by the model run itself — the page prints it, it does not recompute it.
-  function fmtChainVal(step) {
-    if (step.label === 'TVL' || step.label === 'Implied value') return fmtUsd(step.value);
-    return 'x' + Number(step.value).toFixed(4);
-  }
-  function chainHtml(r) {
-    var price = PRICE[r.slug];
-    if (!price) {
-      return '<div class="chainline">' + fmtShort(r.tvl_usd) + ' TVL &times; ' + r.model.category_multiple.toFixed(3) + ' multiple &times; ' +
-        r.model.growth_multiplier.toFixed(3) + ' growth &times; ' + r.model.maturity_multiplier.toFixed(3) + ' maturity &times; ' +
-        r.model.breadth_multiplier.toFixed(3) + ' breadth = ' + fmtShort(r.implied_value_usd) + ' (the step-by-step chain needs the model running in the browser)</div>';
-    }
-    var steps = price.chain.map(function (st) {
-      return '<li><b>' + esc(st.label) + '</b> ' + fmtChainVal(st) + ' <span class="formula-note">' + esc(st.formula) + '</span></li>';
-    }).join('');
-    var product = price.chain.slice(0, 5).reduce(function (acc, st) { return acc * st.value; }, 1);
-    var checks = Math.round(product) === price.implied;
-    return '<ol class="chain-steps">' + steps + '</ol>' +
-      '<div class="chainline">' + fmtShort(r.tvl_usd) + ' &times; ' + price.multiple.toFixed(4) + ' &times; ' + price.growth_multiplier.toFixed(3) +
-      ' &times; ' + price.maturity_multiplier.toFixed(3) + ' &times; ' + price.breadth_multiplier.toFixed(3) + ' = ' + fmtShort(price.implied) +
-      (checks ? ' &check; the chain reproduces the board value' : ' — the chain does not reproduce the board value') + '</div>';
-  }
+
+
   function emptyBoard(st) {
     var what = st.q ? 'No match for &lsquo;' + esc(st.q) + '&rsquo; under these filters.' : 'No protocol on the board matches these filters.';
     return '<div class="empty">' + what + '<br><br><button type="button" class="button" data-clear="board">Clear filters</button></div>';
@@ -466,10 +445,73 @@
     host.innerHTML = rows.length ? buildBoardTable(rows, st) : emptyBoard(st);
     var count = document.getElementById('board-count');
     if (count) count.textContent = boardCountText(rows);
-    wireBoardRegion();
+    if (window.__RADAR_VIEWS__) window.__RADAR_VIEWS__.wireBoardRegion();
   }
 
 
-  // — continued in views.js (the tokened, method and detail views, then render and
-  // events). The two files are one script — this IIFE closes in views.js — split so the
-  // dossier's path order shows the model (a-model.js) first and the views last.
+  // ---------- render & events ----------
+  function debounce(fn, ms) {
+    var t = null;
+    return function () { var self = this, args = arguments; clearTimeout(t); t = setTimeout(function () { fn.apply(self, args); }, ms); };
+  }
+  function wireCommon() {
+    root.querySelectorAll('[data-go]').forEach(function (btn) {
+      btn.addEventListener('click', function () { goto(btn.getAttribute('data-go')); });
+    });
+  }
+  function wireSortButtons(hostId, st, hashOf) {
+    var host = document.getElementById(hostId);
+    if (!host) return;
+    host.querySelectorAll('[data-sort]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var key = btn.getAttribute('data-sort');
+        if (st.sort === key || (key === 'value' && st.sort === 'rank')) st.dir = st.dir === 1 ? -1 : 1;
+        else { st.sort = key; st.dir = -1; }
+        goto(hashOf(st));
+      });
+    });
+  }
+
+
+  function render() {
+    if (/[?&]shot=1/.test(window.location.search)) document.body.classList.add('shot');
+    if (!DATA) {
+      root.innerHTML = '<div class="empty">The radar data file did not load.</div>';
+      window.__MODEL_READY__ = true;
+      return;
+    }
+    fillStats();
+    var VIEWS = window.__RADAR_VIEWS__ || null;
+    var html;
+    if (state.view === 'tokened' && VIEWS) html = VIEWS.tokenedView();
+    else if (state.view === 'method' && VIEWS) html = VIEWS.methodView();
+    else if (state.view === 'protocol' && VIEWS) html = VIEWS.detailView();
+    else html = boardView();
+    root.innerHTML = checkBar() + html;
+    root.setAttribute('aria-busy', 'false');
+    wireCommon();
+    if (state.view === 'board' && VIEWS) VIEWS.wireBoard();
+    if (state.view === 'tokened' && VIEWS) VIEWS.wireTokened();
+    window.__MODEL_READY__ = true;
+  }
+
+  // Everything the second script (views.js) needs, left where it can reach it; views.js
+  // registers the remaining views and calls __RADAR_INIT__. The timeout is a fallback in
+  // case views.js ever fails to load: the board still renders.
+  window.__RADAR_CTX__ = {
+    esc: esc, fmtUsd: fmtUsd, fmtShort: fmtShort, fmtPct: fmtPct, fmtAge: fmtAge, fmtMult: fmtMult,
+    chainList: chainList, capitalForTvl: capitalForTvl,
+    holdDaysForAge: holdDaysForAge, PLAYBOOKS: PLAYBOOKS, state: state, data: DATA,
+    result: RESULT, price: PRICE, masthead: masthead, tabs: tabs, footer: footer,
+    sortHead: sortHead, boardHash: boardHash, tokenedHash: tokenedHash, goto: goto,
+    debounce: debounce, mismatchSlugs: mismatchSlugs, exclusionReasons: exclusionReasons,
+    floorTvl: floorTvl, floorLabel: floorLabel, wireSortButtons: wireSortButtons,
+    render: render, renderBoardRegion: renderBoardRegion, root: root,
+  };
+  // Init is idempotent: views.js calls it after registering the views, and the delayed
+  // fallback calls it only if views.js never arrived (the board still renders, degraded).
+  // The hashchange listener is bound now, not in init, so it can never be bound twice.
+  window.__RADAR_INIT__ = function () { parseHash(); render(); };
+  window.addEventListener('hashchange', function () { parseHash(); render(); });
+  setTimeout(function () { if (!window.__RADAR_VIEWS__) window.__RADAR_INIT__(); }, 800);
+})();

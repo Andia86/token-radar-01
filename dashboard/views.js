@@ -1,5 +1,20 @@
-  // views.js — the second half of the dashboard script: app.js opens the IIFE and this
-  // file closes it. It carries the views that render after the board: tokened, method, detail.
+(function () {
+  'use strict';
+  // views.js — the dashboard's second script: the tokened, method and detail views. app.js
+  // runs first and leaves everything these views need on window.__RADAR_CTX__; this file
+  // registers the views on window.__RADAR_VIEWS__ and starts the page. The split exists so
+  // the dossier's path order shows the model (a-model.js) first and these views last.
+  var C = window.__RADAR_CTX__;
+  var esc = C.esc, fmtUsd = C.fmtUsd, fmtShort = C.fmtShort, fmtPct = C.fmtPct, fmtAge = C.fmtAge,
+    fmtMult = C.fmtMult, chainList = C.chainList,
+    capitalForTvl = C.capitalForTvl, holdDaysForAge = C.holdDaysForAge, PLAYBOOKS = C.PLAYBOOKS,
+    state = C.state, DATA = C.data, RESULT = C.result, PRICE = C.price,
+    masthead = C.masthead, tabs = C.tabs, footer = C.footer, sortHead = C.sortHead,
+    boardHash = C.boardHash, tokenedHash = C.tokenedHash, goto = C.goto, debounce = C.debounce,
+    mismatchSlugs = C.mismatchSlugs, exclusionReasons = C.exclusionReasons,
+    floorTvl = C.floorTvl, floorLabel = C.floorLabel, wireSortButtons = C.wireSortButtons,
+    render = C.render, renderBoardRegion = C.renderBoardRegion, root = C.root;
+
   // ---------- tokened (the control group) ----------
   // Protocols that record a token: never ranked, but priced by the same model and set against
   // the market's own value, so a reader can see what the model would say about protocols whose
@@ -243,6 +258,7 @@
       '<div class="cell"><div class="k">Trading peers in category</div><div class="v">' + (m.peer_count === 0 ? 'none — group multiple' : m.peer_count + ' (' + m.quality + ')') + '</div></div>' +
       '</div>' +
       '<p class="why">Chains on record: ' + esc(chainList(r.chains)) + '</p>' +
+      '<div class="detail-cols"><div class="col-main">' +
       '<h2 class="sec">Why this value</h2>' +
       '<p class="arith"><b>' + fmtUsd(r.tvl_usd) + '</b> TVL &times; <b>' + fmtMult(m.category_multiple) + '</b> category &times; <b>' +
       fmtMult(m.growth_multiplier) + '</b> growth &times; <b>' + fmtMult(m.maturity_multiplier) + '</b> maturity &times; <b>' +
@@ -250,34 +266,63 @@
       '<p class="why">' + whyValue(r) + '</p>' +
       derivationCard(r) +
       (mismatchSlugs()[r.slug] ? '<p class="server-val">This row differs from the server&rsquo;s board (see the check bar above for both values).</p>' : '') +
+      '</div><div class="col-side">' +
       '<h2 class="sec">Farm plan</h2>' +
       '<p class="basis">Plan basis: ' + esc(PLAYBOOKS[r.category] || 'flagship product') + ' playbook &middot; ' +
       esc(r.chains[0] || 'main chain') + ' route &middot; $' + capitalForTvl(r.tvl_usd) + ' capital tier &middot; ' + holdDaysForAge(r.age_days) + '-day hold</p>' +
-      '<ol class="plan">' + r.farm_steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>';
+      '<ol class="plan">' + r.farm_steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>' +
+      '<p class="plan-total">Plan total: <b>$' + capitalForTvl(r.tvl_usd) + '</b> working capital &middot; <b>' + holdDaysForAge(r.age_days) + ' days</b> planned hold &middot; <b>' + r.farm_steps.length + ' steps</b></p>' +
+      '</div></div>';
     return html + footer();
   }
 
-  // ---------- render & events ----------
-  function debounce(fn, ms) {
-    var t = null;
-    return function () { var self = this, args = arguments; clearTimeout(t); t = setTimeout(function () { fn.apply(self, args); }, ms); };
+
+
+
+
+
+  function wireTokenedRegion() { wireSortButtons('tokened-host', state.tokened, tokenedHash); wireCommonClear(); }
+  function wireTokened() {
+    wireTokenedRegion();
+    var q = document.getElementById('tq');
+    if (q) q.addEventListener('input', debounce(function () {
+      state.tokened.q = q.value;
+      window.history.replaceState(null, '', tokenedHash(state.tokened));
+      renderTokenedRegion();
+    }, 120));
+    var cat = document.getElementById('tcat');
+    if (cat) cat.addEventListener('change', function () { state.tokened.cat = cat.value; goto(tokenedHash(state.tokened)); });
   }
-  function wireCommon() {
-    root.querySelectorAll('[data-go]').forEach(function (btn) {
-      btn.addEventListener('click', function () { goto(btn.getAttribute('data-go')); });
-    });
-  }
-  function wireSortButtons(hostId, st, hashOf) {
-    var host = document.getElementById(hostId);
-    if (!host) return;
-    host.querySelectorAll('[data-sort]').forEach(function (btn) {
+  function wireCommonClear() {
+    root.querySelectorAll('#tokened-host [data-clear]').forEach(function (btn) {
       btn.addEventListener('click', function () {
-        var key = btn.getAttribute('data-sort');
-        if (st.sort === key || (key === 'value' && st.sort === 'rank')) st.dir = st.dir === 1 ? -1 : 1;
-        else { st.sort = key; st.dir = -1; }
-        goto(hashOf(st));
+        state.tokened = { q: '', cat: 'all', sort: 'mcap', dir: -1 };
+        if (window.location.hash === tokenedHash(state.tokened)) render(); else goto(tokenedHash(state.tokened));
       });
     });
+  }
+
+
+  function fmtChainVal(step) {
+    if (step.label === 'TVL' || step.label === 'Implied value') return fmtUsd(step.value);
+    return 'x' + Number(step.value).toFixed(4);
+  }
+  function chainHtml(r) {
+    var price = PRICE[r.slug];
+    if (!price) {
+      return '<div class="chainline">' + fmtShort(r.tvl_usd) + ' TVL &times; ' + r.model.category_multiple.toFixed(3) + ' multiple &times; ' +
+        r.model.growth_multiplier.toFixed(3) + ' growth &times; ' + r.model.maturity_multiplier.toFixed(3) + ' maturity &times; ' +
+        r.model.breadth_multiplier.toFixed(3) + ' breadth = ' + fmtShort(r.implied_value_usd) + ' (the step-by-step chain needs the model running in the browser)</div>';
+    }
+    var steps = price.chain.map(function (st) {
+      return '<li><b>' + esc(st.label) + '</b> ' + fmtChainVal(st) + ' <span class="formula-note">' + esc(st.formula) + '</span></li>';
+    }).join('');
+    var product = price.chain.slice(0, 5).reduce(function (acc, st) { return acc * st.value; }, 1);
+    var checks = Math.round(product) === price.implied;
+    return '<ol class="chain-steps">' + steps + '</ol>' +
+      '<div class="chainline">' + fmtShort(r.tvl_usd) + ' &times; ' + price.multiple.toFixed(4) + ' &times; ' + price.growth_multiplier.toFixed(3) +
+      ' &times; ' + price.maturity_multiplier.toFixed(3) + ' &times; ' + price.breadth_multiplier.toFixed(3) + ' = ' + fmtShort(price.implied) +
+      (checks ? ' &check; the chain reproduces the board value' : ' — the chain does not reproduce the board value') + '</div>';
   }
   function wireBoardRegion() {
     wireSortButtons('board-host', state.board, boardHash);
@@ -333,46 +378,8 @@
     var thin = document.getElementById('thin');
     if (thin) thin.addEventListener('change', function () { state.board.hideThin = thin.checked; goto(boardHash(state.board)); });
   }
-  function wireTokenedRegion() { wireSortButtons('tokened-host', state.tokened, tokenedHash); wireCommonClear(); }
-  function wireTokened() {
-    wireTokenedRegion();
-    var q = document.getElementById('tq');
-    if (q) q.addEventListener('input', debounce(function () {
-      state.tokened.q = q.value;
-      window.history.replaceState(null, '', tokenedHash(state.tokened));
-      renderTokenedRegion();
-    }, 120));
-    var cat = document.getElementById('tcat');
-    if (cat) cat.addEventListener('change', function () { state.tokened.cat = cat.value; goto(tokenedHash(state.tokened)); });
-  }
-  function wireCommonClear() {
-    root.querySelectorAll('#tokened-host [data-clear]').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        state.tokened = { q: '', cat: 'all', sort: 'mcap', dir: -1 };
-        if (window.location.hash === tokenedHash(state.tokened)) render(); else goto(tokenedHash(state.tokened));
-      });
-    });
-  }
-  function render() {
-    if (!DATA) {
-      root.innerHTML = '<div class="empty">The radar data file did not load.</div>';
-      window.__MODEL_READY__ = true;
-      return;
-    }
-    fillStats();
-    var html;
-    if (state.view === 'tokened') html = tokenedView();
-    else if (state.view === 'method') html = methodView();
-    else if (state.view === 'protocol') html = detailView();
-    else html = boardView();
-    root.innerHTML = checkBar() + html;
-    root.setAttribute('aria-busy', 'false');
-    wireCommon();
-    if (state.view === 'board') wireBoard();
-    if (state.view === 'tokened') wireTokened();
-    window.__MODEL_READY__ = true;
-  }
-  window.addEventListener('hashchange', function () { parseHash(); render(); });
-  parseHash();
-  render();
+  window.__RADAR_VIEWS__ = {
+    tokenedView: tokenedView, methodView: methodView, detailView: detailView, wireTokened: wireTokened, wireBoard: wireBoard, wireBoardRegion: wireBoardRegion,
+  };
+  if (window.__RADAR_INIT__) window.__RADAR_INIT__();
 })();
