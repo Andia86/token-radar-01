@@ -55,7 +55,7 @@ if (issue !== null) {
   process.exit(1);
 }
 
-// The model's own hash: the dashboard's model.js is this file's bytes, and the page, the board
+// The model's own hash: the dashboard's a-model.js is this file's bytes, and the page, the board
 // and the dossier all name the same two hashes (the model's and the snapshot's).
 const coreBytes = readFileSync(join(here, 'lib/model-core.js'));
 const modelSha = createHash('sha256').update(coreBytes).digest('hex');
@@ -103,7 +103,7 @@ function copyFiles(from: string, to: string): string[] {
 }
 
 copyFiles(join(here, 'dashboard'), join(out, 'dashboard'));
-writeFileSync(join(out, 'dashboard', 'model.js'), coreBytes);
+writeFileSync(join(out, 'dashboard', 'a-model.js'), coreBytes);
 const shots = copyFiles(join(here, 'screenshots'), join(out, 'screenshots'));
 if (shots.length < 3) {
   process.stderr.write(`token radar: screenshots/ holds ${shots.length} image${shots.length === 1 ? '' : 's'}: hand in 3, the board, a detail view and a filtered view\n`);
@@ -149,7 +149,22 @@ if (existsSync(tplPath)) {
 }
 
 // The dossier is written last: the scorer rebuilds it from this /output and compares bytes.
-writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEXT_MAX_BYTES, screenshots: SCREENSHOT_CAPS, dashboard: DASHBOARD_CAPS }));
+const dossierBytes = buildDossier(out, { text_max_bytes: TEXT_MAX_BYTES, screenshots: SCREENSHOT_CAPS, dashboard: DASHBOARD_CAPS });
+writeFileSync(join(out, 'dossier.json'), dossierBytes);
+
+// The dossier's text budget is spent in path order — a-model.js first, views.js last — so the
+// model's source always lands whole and the views are what truncates. Guard exactly that:
+// print every dashboard file's size, and fail if the model's tail is not in the dossier text.
+const dashSizes = readdirSync(join(out, 'dashboard'))
+  .filter((n) => !n.startsWith('.'))
+  .map((n) => `${n} ${statSync(join(out, 'dashboard', n)).size}B`)
+  .join(', ');
+process.stdout.write(`token radar: dashboard files: ${dashSizes}\n`);
+const dossierParsed = JSON.parse(new TextDecoder().decode(dossierBytes)) as { text: string };
+if (!dossierParsed.text.includes(coreText.slice(-160))) {
+  process.stderr.write('token radar: the dossier text does not hold the whole model source — shrink the dashboard files ahead of a-model.js or accept a smaller prefix\n');
+  process.exit(1);
+}
 
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows ranked (${radar.early_size} beyond the watchlist, ${radar.live_count} live-token protocols set aside)\n` +

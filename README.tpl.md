@@ -23,7 +23,7 @@ The run is deterministic: two runs over the same snapshot write byte-identical o
   exchange, not a versioned sub-product), whether above or below the watchlist's ${{floor_m}}M floor. Each row carries its implied value, its full pricing
   decomposition, and a seven-step farm plan with a cost and a time on every step.
 - `data.js` + `dashboard/` — the offline page: the model itself ships with the page
-  (`dashboard/model.js`, the same bytes the server priced with) and re-prices every row in the
+  (`dashboard/a-model.js`, the same bytes the server priced with) and re-prices every row in the
   browser from the snapshot's raw fields carried in `data.js`, then checks its own board
   against the server's and says so in a bar at the top. A sortable, filterable board, a detail
   view per protocol (the value shown as its multiplication, plus the farm plan), a tokened

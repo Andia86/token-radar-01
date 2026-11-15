@@ -10,7 +10,6 @@
 <a class="skip" href="#view">Skip to the board</a>
 <main id="view" tabindex="-1" aria-busy="true"></main>
 
-<!-- The method, stated on the page. The judge reads this file; the board's numbers must match it. -->
 <section id="method-text" hidden>
 <h2>How this board is made</h2>
 <p>The board ranks <span data-stat="board_count"></span> protocols that record no token in the snapshot and are not a wrapped, staked or bridged product of one that trades: the snapshot's <span data-stat="watchlist_size"></span>-protocol watchlist, plus every other protocol that passes the same screen, large or small. The other <span data-stat="not_ranked"></span> protocols in the snapshot are not ranked. The ones whose token already trades are listed apart, at the market's own values.</p>
@@ -21,7 +20,8 @@
 </section>
 
 <script src="../data.js"></script>
-<script src="model.js"></script>
+<script src="a-model.js"></script>
 <script src="app.js"></script>
+<script src="views.js"></script>
 </body>
 </html>
