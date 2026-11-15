@@ -42,7 +42,7 @@
       watchlist_size: meta.stats.watchlistSize, board_size: meta.stats.boardCount,
       early_size: RAW.board.filter(function (r) { return !r.watchlist; }).length,
       live_count: meta.stats.tokenedCount, live_size: RAW.live.length,
-      categories: [], rows: RAW.board, live: RAW.live,
+      categories: [], rows: RAW.board, live: RAW.live, model: meta.model,
     };
     DATA = fallback;
     if (typeof window.ModelCore === 'undefined') { CHECK_ERROR = 'model.js did not load'; return; }
@@ -179,25 +179,17 @@
     'CeDeFi': 'managed yield', 'Stablecoin Wrapper': 'stablecoin position', 'Collateral Markets': 'collateral supply'
   };
 
-  // ---------- routing ----------
-  function readHash() {
-    var hash = window.location.hash.replace(/^#/, '');
-    var qAt = hash.indexOf('?');
-    var path = qAt >= 0 ? hash.slice(0, qAt) : hash;
-    var params = new URLSearchParams(qAt >= 0 ? hash.slice(qAt + 1) : '');
-    var parts = path.split('/').filter(function (s) { return s.length > 0; });
-    return {
-      view: parts[0] === 'protocol' ? 'protocol' : parts[0] === 'live' ? 'live' : parts[0] === 'method' ? 'method' : 'board',
-      slug: parts[0] === 'protocol' ? decodeURIComponent(parts[1] || '') : '',
-      q: params.get('q') || '',
-      cat: params.get('cat') || 'all',
-      chain: params.get('chain') || 'all',
-      watch: params.get('watch') === '1',
-      band: params.get('band') || 'all',
-      sort: params.get('sort') || 'rank',
-      dir: params.get('dir') === 'asc' ? 1 : -1
-    };
-  }
+  // ---------- state & routing ----------
+  // One state object; each tab keeps its own filter and sort, so switching tabs never loses
+  // the other tab's place. The hash is a view of the state: navigation writes it, the
+  // browser's back and forward buttons restore it, and typing in a search box replaces it
+  // silently while only the table region re-renders.
+  var state = {
+    view: 'board',
+    slug: '',
+    board: { q: '', cat: 'all', chain: 'all', watch: false, band: 'all', sort: 'rank', dir: -1 },
+    tokened: { q: '', cat: 'all', sort: 'mcap', dir: -1 },
+  };
   function boardHash(st) {
     var p = new URLSearchParams();
     if (st.q) p.set('q', st.q);
@@ -209,6 +201,38 @@
     if (st.dir === 1) p.set('dir', 'asc');
     var s = p.toString();
     return '#/' + (s ? '?' + s : '');
+  }
+  function tokenedHash(st) {
+    var p = new URLSearchParams();
+    if (st.q) p.set('q', st.q);
+    if (st.cat !== 'all') p.set('cat', st.cat);
+    if (st.sort !== 'mcap') p.set('sort', st.sort);
+    if (st.dir === 1) p.set('dir', 'asc');
+    var s = p.toString();
+    return '#/tokened' + (s ? '?' + s : '');
+  }
+  function parseHash() {
+    var hash = window.location.hash.replace(/^#/, '');
+    var qAt = hash.indexOf('?');
+    var path = qAt >= 0 ? hash.slice(0, qAt) : hash;
+    var params = new URLSearchParams(qAt >= 0 ? hash.slice(qAt + 1) : '');
+    var parts = path.split('/').filter(function (s) { return s.length > 0; });
+    var view = parts[0] === 'protocol' ? 'protocol' : parts[0] === 'tokened' ? 'tokened' : parts[0] === 'method' ? 'method' : 'board';
+    state.view = view;
+    state.slug = view === 'protocol' ? decodeURIComponent(parts[1] || '') : '';
+    if (view === 'board') {
+      state.board = {
+        q: params.get('q') || '', cat: params.get('cat') || 'all', chain: params.get('chain') || 'all',
+        watch: params.get('watch') === '1', band: params.get('band') || 'all',
+        sort: params.get('sort') || 'rank', dir: params.get('dir') === 'asc' ? 1 : -1,
+      };
+    }
+    if (view === 'tokened') {
+      state.tokened = {
+        q: params.get('q') || '', cat: params.get('cat') || 'all',
+        sort: params.get('sort') || 'mcap', dir: params.get('dir') === 'asc' ? 1 : -1,
+      };
+    }
   }
   function goto(hash) { window.location.hash = hash; }
 
@@ -228,12 +252,15 @@
       '<div class="stat"><div class="n">' + DATA.live_count + '</div><div class="l">live-token protocols set aside, unranked</div></div>' +
       '</div>';
   }
-  function tabs(st) {
+  function tabs() {
     function tab(view, label, hash) {
-      var on = st.view === view || (view === 'board' && st.view === 'protocol');
+      var on = state.view === view || (view === 'board' && state.view === 'protocol');
       return '<button type="button" class="tab" aria-pressed="' + on + '" data-go="' + hash + '">' + label + '</button>';
     }
-    return '<div class="tabs">' + tab('board', 'Board', '#/') + tab('live', 'Live tokens', '#/live') + tab('method', 'Method', '#/method') + '</div>';
+    return '<div class="tabs">' +
+      tab('board', 'Board', boardHash(state.board)) +
+      tab('tokened', 'Tokened (control)', tokenedHash(state.tokened)) +
+      tab('method', 'Method', '#/method') + '</div>';
   }
   function footer() {
     return '<footer>Source: ' + esc(DATA.source) + ' &middot; ' + DATA.protocol_count + ' protocols at a $' +
@@ -241,9 +268,14 @@
       ' trading peers &middot; implied value is a conditional value at peer pricing, not a launch forecast.' +
       '<br>model sha256 ' + RAW.meta.model_sha + ' &middot; snapshot sha256 ' + RAW.meta.snapshot_sha + '</footer>';
   }
+  function sortHead(st, key, label, numeric) {
+    var active = st.sort === key || (key === 'value' && st.sort === 'rank');
+    var aria = active ? (st.dir === 1 ? 'asc' : 'desc') : 'none';
+    return '<th' + (numeric ? ' class="num"' : '') + '><button type="button" class="sort" data-sort="' + key + '" aria-sort="' + aria + '">' + label + '</button></th>';
+  }
 
-  // ---------- board ----------
-  function filteredRows(st) {
+  // ---------- board (pre-token subjects) ----------
+  function selectBoardRows(st) {
     var rows = DATA.rows.filter(function (r) {
       if (st.cat !== 'all' && (r.category || 'Uncategorized') !== st.cat) return false;
       if (st.chain !== 'all' && r.chains.indexOf(st.chain) < 0) return false;
@@ -268,7 +300,37 @@
     });
     return rows;
   }
-  function controls(st) {
+  function boardCountText(rows) {
+    return 'Showing ' + rows.length + ' of ' + DATA.rows.length + ' ranked protocols · click a row for its value breakdown and farm plan';
+  }
+  function buildBoardTable(rows, st) {
+    var bad = mismatchSlugs();
+    var html = '<table><thead><tr>' +
+      sortHead(st, 'rank', '#') + '<th>Protocol</th>' + sortHead(st, 'tvl', 'TVL', true) +
+      sortHead(st, 'change', '7d', true) + sortHead(st, 'age', 'Age', true) + '<th class="hideable">Chains</th>' +
+      sortHead(st, 'value', 'Implied value', true) + '<th class="num hideable">Multiple</th>' +
+      '</tr></thead><tbody>';
+    rows.forEach(function (r) {
+      var tag = r.watchlist ? '<span class="tag watch">WATCHLIST</span>' : '<span class="tag early">EARLY FIND</span>';
+      if (bad[r.slug]) tag += ' <span class="tag delta" title="This row differs from the server board">&Delta;</span>';
+      html += '<tr data-slug="' + esc(r.slug) + '" tabindex="0">' +
+        '<td class="rank">' + r.rank + '</td>' +
+        '<td class="who"><span class="name">' + esc(r.name) + '</span>' + tag + '<span class="sub">' + esc(r.category || 'Uncategorized') + '</span></td>' +
+        '<td class="num">' + fmtShort(r.tvl_usd) + '</td>' +
+        '<td class="num ' + (r.change_7d === null ? '' : r.change_7d >= 0 ? 'pos' : 'neg') + '">' + fmtPct(r.change_7d) + '</td>' +
+        '<td class="num">' + fmtAge(r.age_days) + '</td>' +
+        '<td class="hideable">' + esc(chainList(r.chains)) + '</td>' +
+        '<td class="num value">' + fmtShort(r.implied_value_usd) + '</td>' +
+        '<td class="num hideable">' + fmtMult(r.model.category_multiple) + '</td>' +
+        '</tr>';
+    });
+    return html + '</tbody></table>';
+  }
+  function emptyBoard(st) {
+    var what = st.q ? 'No match for &lsquo;' + esc(st.q) + '&rsquo; under these filters.' : 'No protocol on the board matches these filters.';
+    return '<div class="empty">' + what + '<br><br><button type="button" class="button" data-clear="board">Clear filters</button></div>';
+  }
+  function boardControls(st) {
     var cats = Array.from(new Set(DATA.rows.map(function (r) { return r.category || 'Uncategorized'; }))).sort();
     var chains = Array.from(new Set(DATA.rows.reduce(function (acc, r) { return acc.concat(r.chains); }, []))).sort();
     function options(list, current, allLabel) {
@@ -280,7 +342,7 @@
     var bandHtml = bands.map(function (b) {
       return '<option value="' + b[0] + '"' + (st.band === b[0] ? ' selected' : '') + '>' + b[1] + '</option>';
     }).join('');
-    return '<div class="controls">' + tabs(st) +
+    return '<div class="controls">' + tabs() +
       '<input type="search" id="q" placeholder="Search name or category" value="' + esc(st.q) + '" aria-label="Search the board">' +
       '<select id="cat" aria-label="Filter by category">' + options(cats, st.cat, 'All categories') + '</select>' +
       '<select id="chain" aria-label="Filter by chain">' + options(chains, st.chain, 'All chains') + '</select>' +
@@ -288,64 +350,118 @@
       '<label class="check"><input type="checkbox" id="watch"' + (st.watch ? ' checked' : '') + '> Watchlist only</label>' +
       '</div>';
   }
-  function sortHead(st, key, label, numeric) {
-    var active = (st.sort === key) || (key === 'value' && st.sort === 'rank');
-    var aria = active ? (st.dir === 1 ? 'asc' : 'desc') : 'none';
-    return '<th' + (numeric ? ' class="num"' : '') + '><button type="button" class="sort" data-sort="' + key + '" aria-sort="' + aria + '">' + label + '</button></th>';
+  function boardView() {
+    var st = state.board;
+    var rows = selectBoardRows(st);
+    return masthead() + boardControls(st) +
+      '<p class="count-line" id="board-count">' + boardCountText(rows) + '</p>' +
+      '<div id="board-host">' + (rows.length ? buildBoardTable(rows, st) : emptyBoard(st)) + '</div>' + footer();
   }
-  function boardView(st) {
-    var rows = filteredRows(st);
-    var html = masthead() + controls(st);
-    html += '<p class="count-line">Showing ' + rows.length + ' of ' + DATA.rows.length + ' ranked protocols &middot; click a row for its value breakdown and farm plan</p>';
-    if (rows.length === 0) {
-      html += '<div class="empty">No protocol on the board matches these filters.<br><br><button type="button" class="button" data-go="#/">Clear filters</button></div>';
-    } else {
-      html += '<table><thead><tr>' +
-        sortHead(st, 'rank', '#') + '<th>Protocol</th>' + sortHead(st, 'tvl', 'TVL', true) +
-        sortHead(st, 'change', '7d', true) + sortHead(st, 'age', 'Age', true) + '<th class="hideable">Chains</th>' +
-        sortHead(st, 'value', 'Implied value', true) + '<th class="num hideable">Multiple</th>' +
-        '</tr></thead><tbody>';
-      rows.forEach(function (r) {
-        var tag = r.watchlist ? '<span class="tag watch">WATCHLIST</span>' : '<span class="tag early">EARLY FIND</span>';
-        if (mismatchSlugs()[r.slug]) tag += ' <span class="tag delta" title="This row differs from the server board">&Delta;</span>';
-        html += '<tr data-slug="' + esc(r.slug) + '" tabindex="0">' +
-          '<td class="rank">' + r.rank + '</td>' +
-          '<td class="who"><span class="name">' + esc(r.name) + '</span>' + tag + '<span class="sub">' + esc(r.category || 'Uncategorized') + '</span></td>' +
-          '<td class="num">' + fmtShort(r.tvl_usd) + '</td>' +
-          '<td class="num ' + (r.change_7d === null ? '' : r.change_7d >= 0 ? 'pos' : 'neg') + '">' + fmtPct(r.change_7d) + '</td>' +
-          '<td class="num">' + fmtAge(r.age_days) + '</td>' +
-          '<td class="hideable">' + esc(chainList(r.chains)) + '</td>' +
-          '<td class="num value">' + fmtShort(r.implied_value_usd) + '</td>' +
-          '<td class="num hideable">' + fmtMult(r.model.category_multiple) + '</td>' +
-          '</tr>';
-      });
-      html += '</tbody></table>';
-    }
-    return html + footer();
+  // Re-render only the table region: the search box keeps focus, and the region's content is a
+  // pure function of state — the same builder the full render uses, so the two can never drift.
+  function renderBoardRegion() {
+    var st = state.board;
+    var host = document.getElementById('board-host');
+    if (!host) return;
+    var rows = selectBoardRows(st);
+    host.innerHTML = rows.length ? buildBoardTable(rows, st) : emptyBoard(st);
+    var count = document.getElementById('board-count');
+    if (count) count.textContent = boardCountText(rows);
+    wireBoardRegion();
   }
 
-  // ---------- live tokens ----------
-  function liveView(st) {
-    var html = masthead() + '<div class="controls">' + tabs(st) + '</div>';
-    html += '<p class="count-line">The snapshot records a token for ' + DATA.live_count + ' protocols. They already trade, so a radar does not rank them: the ' +
-      DATA.live_size + ' largest by market cap are listed here at the market&rsquo;s own values, and they are the peer set the model prices from.</p>';
-    html += '<table><thead><tr><th>Protocol</th><th>Symbol</th><th class="num">Market cap</th><th class="num">TVL</th><th class="num">Cap / TVL</th><th class="num">7d</th></tr></thead><tbody>';
-    DATA.live.forEach(function (r) {
-      var ratio = r.mcap_usd && r.tvl_usd ? 'x' + (r.mcap_usd / r.tvl_usd).toFixed(3) : '—';
-      html += '<tr><td class="who"><span class="name">' + esc(r.name) + '</span><span class="sub">' + esc(r.category || 'Uncategorized') + '</span></td>' +
-        '<td class="mono">' + esc(r.symbol || '—') + '</td>' +
-        '<td class="num">' + fmtShort(r.mcap_usd) + '</td><td class="num">' + fmtShort(r.tvl_usd) + '</td>' +
-        '<td class="num">' + ratio + '</td>' +
-        '<td class="num ' + (r.change_7d === null ? '' : r.change_7d >= 0 ? 'pos' : 'neg') + '">' + fmtPct(r.change_7d) + '</td></tr>';
+  // ---------- tokened (the control group) ----------
+  // Protocols that record a token: never ranked, but priced by the same model and set against
+  // the market's own value, so a reader can see what the model would say about protocols whose
+  // answer is already known.
+  function tokenedRows() {
+    if (!RESULT) return null;
+    return RESULT.tokened.map(function (entry) {
+      var p = entry.row;
+      return {
+        slug: p.slug, name: p.name, category: p.category || 'Uncategorized', symbol: p.symbol,
+        chains: p.chains, tvl_usd: p.tvl_usd, mcap_usd: p.mcap_usd, change_7d: p.change_7d,
+        implied: entry.price.implied, peers: entry.price.peers, multiple: entry.price.multiple,
+        ratio: p.mcap_usd ? p.mcap_usd / entry.price.implied : null,
+      };
     });
-    html += '</tbody></table>' + footer();
-    return html;
+  }
+  function selectTokenedRows(st, all) {
+    var rows = all.filter(function (r) {
+      if (st.cat !== 'all' && r.category !== st.cat) return false;
+      if (st.q) {
+        var q = st.q.toLowerCase();
+        if (r.name.toLowerCase().indexOf(q) < 0 && r.slug.indexOf(q) < 0 && r.category.toLowerCase().indexOf(q) < 0 && (r.symbol || '').toLowerCase().indexOf(q) < 0) return false;
+      }
+      return true;
+    });
+    var key = { mcap: 'mcap_usd', implied: 'implied', ratio: 'ratio', tvl: 'tvl_usd' }[st.sort] || 'mcap_usd';
+    rows.sort(function (a, b) {
+      var av = a[key], bv = b[key];
+      if (av === null || av === undefined) return 1;
+      if (bv === null || bv === undefined) return -1;
+      if (av !== bv) return (av - bv) * st.dir;
+      return a.slug < b.slug ? -1 : 1;
+    });
+    return rows;
+  }
+  function buildTokenedTable(rows, st) {
+    var html = '<table><thead><tr><th>Protocol</th><th>Symbol</th>' +
+      sortHead(st, 'mcap', 'Market cap', true) + sortHead(st, 'implied', 'Model value', true) +
+      sortHead(st, 'ratio', 'Market / model', true) + sortHead(st, 'tvl', 'TVL', true) +
+      '<th class="num hideable">Peers</th></tr></thead><tbody>';
+    rows.forEach(function (r) {
+      html += '<tr>' +
+        '<td class="who"><span class="name">' + esc(r.name) + '</span><span class="sub">' + esc(r.category) + '</span></td>' +
+        '<td class="mono">' + esc(r.symbol || '—') + '</td>' +
+        '<td class="num">' + fmtShort(r.mcap_usd) + '</td>' +
+        '<td class="num">' + fmtShort(r.implied) + '</td>' +
+        '<td class="num">' + (r.ratio === null ? '—' : 'x' + r.ratio.toFixed(2)) + '</td>' +
+        '<td class="num">' + fmtShort(r.tvl_usd) + '</td>' +
+        '<td class="num hideable">' + (r.peers === 0 ? 'none' : r.peers) + '</td></tr>';
+    });
+    return html + '</tbody></table>';
+  }
+  function tokenedCountText(rows, total) {
+    return 'Showing ' + rows.length + ' of ' + total + ' tokened protocols — the control group: the same model, priced against the market&rsquo;s own answer';
+  }
+  function tokenedView() {
+    var st = state.tokened;
+    var all = tokenedRows();
+    var head = masthead() + '<div class="controls">' + tabs() +
+      '<input type="search" id="tq" placeholder="Search name, category or symbol" value="' + esc(st.q) + '" aria-label="Search the tokened protocols">' +
+      '<select id="tcat" aria-label="Filter by category">' +
+      (function () {
+        var cats = all ? Array.from(new Set(all.map(function (r) { return r.category; }))).sort() : [];
+        var html = '<option value="all">All categories</option>';
+        cats.forEach(function (v) { html += '<option value="' + esc(v) + '"' + (v === st.cat ? ' selected' : '') + '>' + esc(v) + '</option>'; });
+        return html;
+      })() + '</select></div>';
+    if (!all) {
+      return head + '<div class="empty">The control group needs the model to run in the browser; it did not, so the tokened protocols cannot be priced here.</div>' + footer();
+    }
+    var rows = selectTokenedRows(st, all);
+    return head +
+      '<p class="count-line" id="tokened-count">' + tokenedCountText(rows, all.length) + '</p>' +
+      '<div id="tokened-host">' + (rows.length ? buildTokenedTable(rows, st) : '<div class="empty">No tokened protocol matches.<br><br><button type="button" class="button" data-clear="tokened">Clear filters</button></div>') + '</div>' + footer();
+  }
+  function renderTokenedRegion() {
+    var st = state.tokened;
+    var host = document.getElementById('tokened-host');
+    if (!host) return;
+    var all = tokenedRows();
+    if (!all) return;
+    var rows = selectTokenedRows(st, all);
+    host.innerHTML = rows.length ? buildTokenedTable(rows, st) : '<div class="empty">No tokened protocol matches.<br><br><button type="button" class="button" data-clear="tokened">Clear filters</button></div>';
+    var count = document.getElementById('tokened-count');
+    if (count) count.innerHTML = tokenedCountText(rows, all.length);
+    wireTokenedRegion();
   }
 
   // ---------- method ----------
-  function methodView(st) {
+  function methodView() {
     var src = document.getElementById('method-text');
-    var html = masthead() + '<div class="controls">' + tabs(st) + '</div><div class="method-body">';
+    var html = masthead() + '<div class="controls">' + tabs() + '</div><div class="method-body">';
     if (src) html += src.innerHTML;
     var m = DATA.model;
     html += '<div class="formula">implied = TVL &times; M(category) &times; G &times; A &times; B &nbsp;&middot;&nbsp; M = (n &times; median + ' +
@@ -378,12 +494,12 @@
       (m.age_days === null ? 'an unrecorded time (counted as one year)' : m.age_days + ' days') + ' with no token on record, and it runs on ' +
       r.chains.length + ' chain' + (r.chains.length === 1 ? '' : 's') + '. Multiplied out, a token priced like its peers would be worth <b>' + fmtUsd(r.implied_value_usd) + '</b> &mdash; a conditional value, not a forecast.';
   }
-  function detailView(st) {
+  function detailView() {
     var r = null;
-    DATA.rows.forEach(function (row) { if (row.slug === st.slug) r = row; });
-    if (!r) return masthead() + '<div class="empty">No protocol with that slug is on the board.<br><br><button type="button" class="button" data-go="#/">Back to the board</button></div>' + footer();
+    DATA.rows.forEach(function (row) { if (row.slug === state.slug) r = row; });
+    if (!r) return masthead() + '<div class="empty">No protocol with that slug is on the board.<br><br><button type="button" class="button" data-go="' + boardHash(state.board) + '">Back to the board</button></div>' + footer();
     var m = r.model;
-    var html = '<p><a class="back" href="#/">&larr; Back to the board</a></p>' +
+    var html = '<p><a class="back" href="' + boardHash(state.board) + '">&larr; Back to the board</a></p>' +
       '<div class="masthead"><p class="kicker">Rank ' + r.rank + ' of ' + DATA.board_size + ' &middot; ' + esc(r.slug) + '</p>' +
       '<h1>' + esc(r.name) + '</h1>' +
       '<p class="badges"><span class="badge">' + esc(r.category || 'Uncategorized') + '</span>' +
@@ -392,8 +508,7 @@
       '<div class="record">' +
       '<div class="cell"><div class="k">TVL</div><div class="v">' + fmtUsd(r.tvl_usd) + '</div></div>' +
       '<div class="cell"><div class="k">TVL change, 7d</div><div class="v">' + fmtPct(r.change_7d) + '</div></div>' +
-      '<div class="cell"><div class="k">Implied value</div><div class="v">' + fmtUsd(r.implied_value_usd) +
-      (mismatchSlugs()[r.slug] ? ' <s class="server-val" title="The server board&rsquo;s value">' + fmtUsd((RAW.board.filter(function (x) { return x.slug === r.slug; })[0] || {}).implied_value_usd) + '</s>' : '') + '</div></div>' +
+      '<div class="cell"><div class="k">Implied value</div><div class="v">' + fmtUsd(r.implied_value_usd) + '</div></div>' +
       '<div class="cell"><div class="k">Category multiple</div><div class="v">' + fmtMult(m.category_multiple) + '</div></div>' +
       '<div class="cell"><div class="k">On record since</div><div class="v">' + (r.listed_at || 'not recorded') + '</div></div>' +
       '<div class="cell"><div class="k">Age with no token</div><div class="v">' + (m.age_days === null ? 'n/a' : m.age_days + ' days') + '</div></div>' +
@@ -406,6 +521,7 @@
       fmtMult(m.growth_multiplier) + '</b> growth &times; <b>' + fmtMult(m.maturity_multiplier) + '</b> maturity &times; <b>' +
       fmtMult(m.breadth_multiplier) + '</b> breadth = <span class="eq">' + fmtUsd(r.implied_value_usd) + '</span></p>' +
       '<p class="why">' + whyValue(r) + '</p>' +
+      (mismatchSlugs()[r.slug] ? '<p class="server-val">This row differs from the server&rsquo;s board (see the check bar above for both values).</p>' : '') +
       '<h2 class="sec">Farm plan</h2>' +
       '<p class="basis">Plan basis: ' + esc(PLAYBOOKS[r.category] || 'flagship product') + ' playbook &middot; ' +
       esc(r.chains[0] || 'main chain') + ' route &middot; $' + capitalForTvl(r.tvl_usd) + ' capital tier &middot; ' + holdDaysForAge(r.age_days) + '-day hold</p>' +
@@ -414,88 +530,95 @@
   }
 
   // ---------- render & events ----------
-  function bindOnce(node, key, fn) {
-    if (node.dataset['bound_' + key]) return;
-    node.dataset['bound_' + key] = '1';
-    fn();
+  function debounce(fn, ms) {
+    var t = null;
+    return function () { var self = this, args = arguments; clearTimeout(t); t = setTimeout(function () { fn.apply(self, args); }, ms); };
   }
-  function render() {
-    var st = readHash();
-    var html;
-    if (!DATA) {
-      root.innerHTML = '<div class="empty">The radar data file did not load.</div>';
-      return;
-    }
-    if (st.view === 'live') html = liveView(st);
-    else if (st.view === 'method') html = methodView(st);
-    else if (st.view === 'protocol') html = detailView(st);
-    else html = boardView(st);
-    root.innerHTML = checkBar() + html;
-    root.setAttribute('aria-busy', 'false');
-    wireTable(st);
-    wireControls(st);
-    window.__MODEL_READY__ = true;
+  function wireCommon() {
+    root.querySelectorAll('[data-go]').forEach(function (btn) {
+      btn.addEventListener('click', function () { goto(btn.getAttribute('data-go')); });
+    });
   }
-  function wireTable(st) {
-    root.querySelectorAll('[data-go]').forEach(function (node) {
-      bindOnce(node, 'go', function () {
-        node.addEventListener('click', function () { goto(node.getAttribute('data-go')); });
+  function wireSortButtons(hostId, st, hashOf) {
+    var host = document.getElementById(hostId);
+    if (!host) return;
+    host.querySelectorAll('[data-sort]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var key = btn.getAttribute('data-sort');
+        if (st.sort === key || (key === 'value' && st.sort === 'rank')) st.dir = st.dir === 1 ? -1 : 1;
+        else { st.sort = key; st.dir = -1; }
+        goto(hashOf(st));
       });
     });
-    root.querySelectorAll('tr[data-slug]').forEach(function (tr) {
+  }
+  function wireBoardRegion() {
+    wireSortButtons('board-host', state.board, boardHash);
+    root.querySelectorAll('#board-host [data-clear]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        state.board = { q: '', cat: 'all', chain: 'all', watch: false, band: 'all', sort: 'rank', dir: -1 };
+        if (window.location.hash === boardHash(state.board)) render(); else goto(boardHash(state.board));
+      });
+    });
+    root.querySelectorAll('#board-host tr[data-slug]').forEach(function (tr) {
       function open() { goto('#/protocol/' + encodeURIComponent(tr.getAttribute('data-slug'))); }
       tr.addEventListener('click', open);
       tr.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
     });
-    root.querySelectorAll('[data-sort]').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var key = btn.getAttribute('data-sort');
-        if (key === 'rank') { goto(boardHash(Object.assign({}, st, { sort: 'rank', dir: -1 }))); return; }
-        var next = Object.assign({}, st, { sort: key });
-        if (st.sort === key || (key === 'value' && st.sort === 'rank')) next.dir = -st.dir;
-        else next.dir = -1;
-        goto(boardHash(next));
-      });
-    });
   }
-  function wireControls(st) {
+  function wireBoard() {
+    wireBoardRegion();
     var q = document.getElementById('q');
-    if (q) {
-      bindOnce(q, 'input', function () {
-        q.addEventListener('input', function () {
-          var next = Object.assign({}, readHash(), { q: q.value });
-          history.replaceState(null, '', boardHash(next));
-          refreshTable(next);
-        });
-      });
-    }
-    [['cat', 'cat'], ['chain', 'chain'], ['band', 'band']].forEach(function (pair) {
-      var sel = document.getElementById(pair[0]);
-      if (sel) sel.addEventListener('change', function () {
-        var next = Object.assign({}, st);
-        next[pair[1]] = sel.value;
-        goto(boardHash(next));
-      });
+    if (q) q.addEventListener('input', debounce(function () {
+      state.board.q = q.value;
+      window.history.replaceState(null, '', boardHash(state.board));
+      renderBoardRegion();
+    }, 120));
+    ['cat', 'chain', 'band'].forEach(function (id) {
+      var sel = document.getElementById(id);
+      if (sel) sel.addEventListener('change', function () { state.board[id] = sel.value; goto(boardHash(state.board)); });
     });
     var watch = document.getElementById('watch');
-    if (watch) watch.addEventListener('change', function () {
-      var next = Object.assign({}, st, { watch: watch.checked });
-      goto(boardHash(next));
+    if (watch) watch.addEventListener('change', function () { state.board.watch = watch.checked; goto(boardHash(state.board)); });
+  }
+  function wireTokenedRegion() { wireSortButtons('tokened-host', state.tokened, tokenedHash); wireCommonClear(); }
+  function wireTokened() {
+    wireTokenedRegion();
+    var q = document.getElementById('tq');
+    if (q) q.addEventListener('input', debounce(function () {
+      state.tokened.q = q.value;
+      window.history.replaceState(null, '', tokenedHash(state.tokened));
+      renderTokenedRegion();
+    }, 120));
+    var cat = document.getElementById('tcat');
+    if (cat) cat.addEventListener('change', function () { state.tokened.cat = cat.value; goto(tokenedHash(state.tokened)); });
+  }
+  function wireCommonClear() {
+    root.querySelectorAll('#tokened-host [data-clear]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        state.tokened = { q: '', cat: 'all', sort: 'mcap', dir: -1 };
+        if (window.location.hash === tokenedHash(state.tokened)) render(); else goto(tokenedHash(state.tokened));
+      });
     });
   }
-  // Search re-renders only the table region so the input keeps focus.
-  function refreshTable(st) {
-    var fresh = document.createElement('div');
-    fresh.innerHTML = boardView(st);
-    var oldTable = root.querySelector('table');
-    var newTable = fresh.querySelector('table');
-    var oldCount = root.querySelector('.count-line');
-    var newCount = fresh.querySelector('.count-line');
-    if (oldCount && newCount) oldCount.textContent = newCount.textContent;
-    if (oldTable && newTable) oldTable.replaceWith(newTable);
-    else if (oldTable && !newTable) { oldTable.remove(); }
-    wireTable(st);
+  function render() {
+    if (!DATA) {
+      root.innerHTML = '<div class="empty">The radar data file did not load.</div>';
+      window.__MODEL_READY__ = true;
+      return;
+    }
+    var html;
+    if (state.view === 'tokened') html = tokenedView();
+    else if (state.view === 'method') html = methodView();
+    else if (state.view === 'protocol') html = detailView();
+    else html = boardView();
+    root.innerHTML = checkBar() + html;
+    root.setAttribute('aria-busy', 'false');
+    wireCommon();
+    if (state.view === 'board') wireBoard();
+    if (state.view === 'tokened') wireTokened();
+    window.__MODEL_READY__ = true;
   }
-  window.addEventListener('hashchange', render);
+  window.addEventListener('hashchange', function () { parseHash(); render(); });
+  parseHash();
   render();
 })();
