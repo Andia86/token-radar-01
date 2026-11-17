@@ -105,7 +105,7 @@
     var sha = 'model ' + meta.model_sha.slice(0, 12) + ' &middot; snapshot ' + meta.snapshot_sha.slice(0, 12);
     if (CHECK && CHECK.ok) {
       return '<div class="checkbar ok" role="status">Browser re-priced ' + CHECK.matched + '/' + CHECK.total +
-        ' rows from the snapshot&rsquo;s raw fields &mdash; the priced fields (value, rank, multiple, peers) match the server&rsquo;s board, row for row &middot; ' + sha + '</div>';
+        ' rows from the snapshot&rsquo;s raw fields &mdash; every priced field the server publishes (value, rank, multiple, peers, the growth, maturity and breadth factors, the shrinkage weight, quality, group and cap flag) matches the server&rsquo;s board, row for row &middot; ' + sha + '</div>';
     }
     if (CHECK) {
       var bad = {};
@@ -529,7 +529,15 @@
   // or detail views — the board only, and it says so, instead of silently showing
   // the board under another view's URL.
   function viewsNotice() {
-    if (window.__RADAR_VIEWS__) return '';
+    var V = window.__RADAR_VIEWS__;
+    if (V) {
+      // Registered, but the view this URL asks for is not among its functions (a part
+      // script failed on its own): the board is shown, and the page says so.
+      var fn = state.view === 'tokened' ? 'tokenedView' : state.view === 'method' ? 'methodView' : state.view === 'protocol' ? 'detailView' : null;
+      if (!fn || V[fn]) return '';
+      return '<div class="checkbar warn" role="status">The ' + state.view + ' view is unavailable (its script did not load in full), so the board is shown instead. ' +
+        'The board below is complete: sorting, filtering, search and the per-row check chain all work.</div>';
+    }
     var asked = state.view === 'board' ? '' : 'The ' + state.view + ' view you asked for needs it, so the board is shown instead. ';
     return '<div class="checkbar warn" role="status">views.js did not load, so the Tokened, Method and detail views are unavailable. ' +
       asked + 'The board below is complete: sorting, filtering, search and the per-row check chain all work.</div>';
@@ -570,25 +578,25 @@
     fillStats();
     var VIEWS = window.__RADAR_VIEWS__ || null;
     var html;
-    if (state.view === 'tokened' && VIEWS) html = VIEWS.tokenedView();
-    else if (state.view === 'method' && VIEWS) html = VIEWS.methodView();
-    else if (state.view === 'protocol' && VIEWS) html = VIEWS.detailView();
+    // Each view is asked for by name and used only if that function is really there:
+    // a views script that loaded in part (or a part script that never arrived) must
+    // degrade to the board, never throw the whole page away with it.
+    if (state.view === 'tokened' && VIEWS && VIEWS.tokenedView) html = VIEWS.tokenedView();
+    else if (state.view === 'method' && VIEWS && VIEWS.methodView) html = VIEWS.methodView();
+    else if (state.view === 'protocol' && VIEWS && VIEWS.detailView) html = VIEWS.detailView();
     else html = boardView();
     root.innerHTML = checkBar() + viewsNotice() + html;
     root.setAttribute('aria-busy', 'false');
     wireCommon();
-    if (VIEWS) {
-      if (state.view === 'board') VIEWS.wireBoard();
-      if (state.view === 'tokened') VIEWS.wireTokened();
-    } else {
-      wireBoardFallback();
-    }
+    if (VIEWS && state.view === 'board' && VIEWS.wireBoard) VIEWS.wireBoard();
+    else if (VIEWS && state.view === 'tokened' && VIEWS.wireTokened) VIEWS.wireTokened();
+    else if (!VIEWS || state.view === 'board') wireBoardFallback();
     window.__MODEL_READY__ = true;
   }
 
-  // Everything the second script (views.js) needs, left where it can reach it; views.js
-  // registers the remaining views and calls __RADAR_INIT__. The timeout is a fallback in
-  // case views.js ever fails to load: the board still renders.
+  // Everything the view scripts (b-views.js, then views.js) need, left where they can
+  // reach it; views.js registers the views and calls __RADAR_INIT__. The timeout is a
+  // fallback in case views.js ever fails to load: the board still renders.
   window.__RADAR_CTX__ = {
     esc: esc, fmtUsd: fmtUsd, fmtShort: fmtShort, fmtPct: fmtPct, fmtAge: fmtAge, fmtMult: fmtMult,
     chainList: chainList, capitalForTvl: capitalForTvl,

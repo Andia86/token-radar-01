@@ -74,7 +74,61 @@ eq('quality 3', core.qualityFor(3), 'thin');
 eq('quality 2', core.qualityFor(2), 'very-thin');
 eq('quality 1', core.qualityFor(1), 'very-thin');
 eq('quality 0', core.qualityFor(0), 'borrowed');
-// every snapshot category is mapped (checked against the real snapshot when one is passed)
+// selfCheck: a locally priced row against the server's published row, field by field.
+// The local entry is what runModel produces; the server row is what model.ts publishes
+// (multipliers and shrink weight rounded to four decimals, the rest as computed).
+{
+  const localEntry = (over = {}) => ({
+    row: { slug: 'proto-a' },
+    rank: 7,
+    price: {
+      implied: 123456789, peers: 4, multiple: 0.512345678, growth_pct: -12.345678,
+      growth_multiplier: 0.938271, maturity_multiplier: 0.765432, breadth_multiplier: 1.06,
+      shrink: { w: 0.308642, capped: true }, quality: 'thin', group: 'Credit & Yield',
+      category: 'Lending', age_days: 400, ...over,
+    },
+  });
+  const serverRow = (modelOver = {}, rowOver = {}) => ({
+    slug: 'proto-a', rank: 7, implied_value_usd: 123456789, age_days: 400,
+    model: {
+      peer_count: 4, category_multiple: 0.5123, growth_pct: -12.345678,
+      growth_multiplier: 0.9383, maturity_multiplier: 0.7654, breadth_multiplier: 1.06,
+      shrink_w: 0.3086, quality: 'thin', group: 'Credit & Yield', capped: true,
+      category: 'Lending', age_days: 400, ...modelOver,
+    },
+    ...rowOver,
+  });
+  const clean = core.selfCheck([localEntry()], [serverRow()]);
+  eq('selfCheck clean ok', clean.ok, true);
+  eq('selfCheck clean matched', clean.matched, 1);
+  // the server's four-decimal rounding is reproduced, not compared raw: a local value
+  // that rounds to the published figure passes, one that rounds elsewhere fails.
+  const rounded = core.selfCheck([localEntry({ growth_multiplier: 0.93826 })], [serverRow()]);
+  eq('selfCheck rounding boundary ok', rounded.ok, true);
+  const offRound = core.selfCheck([localEntry({ growth_multiplier: 0.938351 })], [serverRow()]);
+  eq('selfCheck off-rounding fails', offRound.ok, false);
+  eq('selfCheck off-rounding field', offRound.mismatches[0].field, 'growth_multiplier');
+  // every newly compared field is really compared: tamper one at a time and the check
+  // must name that field and leave the row unmatched.
+  const tampers = [
+    ['shrink_w', () => serverRow({ shrink_w: 0.31 })],
+    ['capped', () => serverRow({ capped: false })],
+    ['quality', () => serverRow({ quality: 'solid' })],
+    ['group', () => serverRow({ group: 'Bitcoin' })],
+    ['category', () => serverRow({ category: 'Dexs' })],
+    ['age_days', () => serverRow({}, { age_days: 401 })],
+    ['growth_pct', () => serverRow({ growth_pct: -12.4 })],
+    ['maturity_multiplier', () => serverRow({ maturity_multiplier: 0.77 })],
+    ['breadth_multiplier', () => serverRow({ breadth_multiplier: 1.09 })],
+  ];
+  for (const [field, make] of tampers) {
+    const r = core.selfCheck([localEntry()], [make()]);
+    eq(`selfCheck tamper ${field} fails`, r.ok, false);
+    eq(`selfCheck tamper ${field} named`, r.mismatches.some((m) => m.field === field), true);
+    eq(`selfCheck tamper ${field} unmatched`, r.matched, 0);
+  }
+}
+
 if (process.argv[2]) {
   const snapshot = JSON.parse((await import('node:fs')).readFileSync(process.argv[2], 'utf8'));
   const cats = new Set(snapshot.protocols.map((p) => p.category ?? 'Uncategorized'));

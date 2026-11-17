@@ -75,6 +75,7 @@ const coreText = coreBytes.toString('utf8');
 const coreExcerpts = {
   median: coreExcerpt(coreText, 'median'),
   shrinkMultiple: coreExcerpt(coreText, 'shrinkMultiple'),
+  selfCheck: coreExcerpt(coreText, 'selfCheck'),
 };
 const raw = buildRaw(snapshot, snapshotSha);
 const rawBytes = Buffer.byteLength(JSON.stringify(raw), 'utf8');
@@ -170,6 +171,22 @@ const dossierParsed = JSON.parse(new TextDecoder().decode(dossierBytes)) as { te
 if (!dossierParsed.text.includes(coreText.slice(-160))) {
   process.stderr.write('token radar: the dossier text does not hold the whole model source — shrink the dashboard files ahead of a-model.js or accept a smaller prefix\n');
   process.exit(1);
+}
+// The budget is spent in path order — a-model.js and app.js whole, then the head of the
+// next file, and nothing after it. b-views.js (the method and tokened views) is named to
+// be that next file; views.js, last, is carried in the file list. Report the coverage
+// every run, and fail if the b-views head ever stops reaching the text: that regression
+// is exactly what the split exists to prevent, and it should be loud, not discovered.
+{
+  const bHead = dossierParsed.text.includes('function methodView()');
+  const bFull = dossierParsed.text.includes('window.__RADAR_VIEWS_PART__ = {');
+  process.stdout.write(
+    `token radar: dossier text ${Buffer.byteLength(dossierParsed.text)}B; b-views.js in text: ${bFull ? 'whole' : bHead ? 'head excerpt (the method view)' : 'NOT SHOWN'}\n`,
+  );
+  if (!bHead) {
+    process.stderr.write('token radar: the b-views.js head no longer reaches the dossier text — the files ahead of it grew past the budget\n');
+    process.exit(1);
+  }
 }
 
 process.stdout.write(

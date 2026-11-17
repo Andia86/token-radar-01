@@ -35,7 +35,7 @@ The run is deterministic: two runs over the same snapshot write byte-identical o
   control-group view that prices already-trading protocols with the same model against the
   market's own values, and a method view that states the model and the per-category peer table.
 - `screenshots/` — the board, a detail view, and a filtered view, all rendered from the built page.
-- `dossier.json` — written last, with the vendored `buildDossier`, byte-identical to a rebuild. Its text block holds the model (`dashboard/a-model.js`) and the dashboard's main script (`dashboard/app.js`) in full; `dashboard/views.js` — the tokened, method and detail views — is named in the dossier's file list only, because its text does not fit the dossier's text budget. Read it in `dashboard/views.js` itself.
+- `dossier.json` — written last, with the vendored `buildDossier`, byte-identical to a rebuild. Its text block holds the model (`dashboard/a-model.js`) and the dashboard's main script (`dashboard/app.js`) in full, plus the head of `dashboard/b-views.js` — the method and tokened views — as far as the text budget reaches; the build log states the coverage on every run and fails if that head ever stops reaching the text. `dashboard/views.js` — the detail view and the board wiring — is named in the dossier's file list only. Read both in `dashboard/` itself.
 
 ## The model (lib/model-core.js)
 
